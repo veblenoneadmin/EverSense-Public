@@ -1,0 +1,382 @@
+{
+  "reportMeta": {
+    "period": "weekly",
+    "dateRange": {
+      "start": "2026-02-16",
+      "end": "2026-02-22"
+    },
+    "previousDateRange": {
+      "start": "2026-02-09",
+      "end": "2026-02-15"
+    },
+    "generatedAt": "2026-02-22T15:30:45.789Z",
+    "orgId": "org-demo-001"
+  },
+  "summary": {
+    "totalHours": 385.5,
+    "totalReports": 12,
+    "totalTasks": 28,
+    "activeEmployees": 8,
+    "avgHoursPerEmployee": 48.19,
+    "avgTasksPerEmployee": 3.5,
+    "avgReportsPerEmployee": 1.5,
+    "completionRate": 80,
+    "memberCount": 10,
+    "topProject": {
+      "name": "Website Redesign v2.0",
+      "hours": 140.5
+    }
+  },
+  "trends": {
+    "hours": 12,
+    "reports": 5,
+    "tasks": 8,
+    "activeEmployees": 0,
+    "completionRate": 10
+  },
+  "performance": {
+    "starPerformers": [
+      {
+        "id": "user-001",
+        "name": "Alice Johnson",
+        "email": "alice@company.com",
+        "role": "STAFF",
+        "hours": 62.5,
+        "reports": 3,
+        "tasksCompleted": 8,
+        "projects": [
+          "Website Redesign v2.0",
+          "Mobile App Launch"
+        ],
+        "daysActive": 6,
+        "avgHoursPerDay": 10.42,
+        "hasActivity": true,
+        "performanceScore": 1.85
+      },
+      {
+        "id": "user-002",
+        "name": "Marcus Chen",
+        "email": "marcus@company.com",
+        "role": "STAFF",
+        "hours": 58.25,
+        "reports": 2,
+        "tasksCompleted": 7,
+        "projects": [
+          "Website Redesign v2.0",
+          "Backend API Improvements"
+        ],
+        "daysActive": 6,
+        "avgHoursPerDay": 9.71,
+        "hasActivity": true,
+        "performanceScore": 1.72
+      }
+    ],
+    "overworked": [
+      {
+        "id": "user-003",
+        "name": "Bob Smith",
+        "email": "bob@company.com",
+        "role": "STAFF",
+        "hours": 78.25,
+        "reports": 2,
+        "tasksCompleted": 5,
+        "projects": [
+          "Mobile App Launch",
+          "Infrastructure Updates"
+        ],
+        "daysActive": 6,
+        "avgHoursPerDay": 13.04,
+        "hasActivity": true,
+        "performanceScore": 1.62
+      }
+    ],
+    "coasters": [
+      {
+        "id": "user-004",
+        "name": "Charlie Brown",
+        "email": "charlie@company.com",
+        "role": "STAFF",
+        "hours": 35.0,
+        "reports": 2,
+        "tasksCompleted": 2,
+        "projects": [
+          "Documentation Updates"
+        ],
+        "daysActive": 5,
+        "avgHoursPerDay": 7.0,
+        "hasActivity": true,
+        "performanceScore": 0.72
+      },
+      {
+        "id": "user-005",
+        "name": "Eve Wilson",
+        "email": "eve@company.com",
+        "role": "STAFF",
+        "hours": 40.75,
+        "reports": 1,
+        "tasksCompleted": 3,
+        "projects": [
+          "Quality Assurance"
+        ],
+        "daysActive": 5,
+        "avgHoursPerDay": 8.15,
+        "hasActivity": true,
+        "performanceScore": 0.84
+      }
+    ],
+    "underperformers": [
+      {
+        "id": "user-006",
+        "name": "Diana Prince",
+        "email": "diana@company.com",
+        "role": "STAFF",
+        "hours": 12.5,
+        "reports": 0,
+        "tasksCompleted": 0,
+        "projects": [],
+        "daysActive": 2,
+        "avgHoursPerDay": 6.25,
+        "hasActivity": false,
+        "performanceScore": 0.26
+      },
+      {
+        "id": "user-007",
+        "name": "Frank Miller",
+        "email": "frank@company.com",
+        "role": "STAFF",
+        "hours": 18.5,
+        "reports": 1,
+        "tasksCompleted": 1,
+        "projects": [
+          "Marketing Campaign"
+        ],
+        "daysActive": 3,
+        "avgHoursPerDay": 6.17,
+        "hasActivity": true,
+        "performanceScore": 0.38
+      }
+    ]
+  },
+  "actionItems": [
+    {
+      "type": "underperformance",
+      "severity": "high",
+      "employee": {
+        "id": "user-006",
+        "name": "Diana Prince",
+        "email": "diana@company.com"
+      },
+      "reasons": [
+        "Logged 12.5h vs avg 48.19h (26% of average)",
+        "Completed 0 tasks vs avg 3.5",
+        "Submitted 0 reports vs avg 1.5"
+      ],
+      "recommendation": "Schedule performance review and discuss support needs. Consider if employee is on leave or needs additional resources."
+    },
+    {
+      "type": "underperformance",
+      "severity": "high",
+      "employee": {
+        "id": "user-007",
+        "name": "Frank Miller",
+        "email": "frank@company.com"
+      },
+      "reasons": [
+        "Logged 18.5h vs avg 48.19h (38% of average)",
+        "Completed 1 task vs avg 3.5"
+      ],
+      "recommendation": "Schedule performance review and discuss support needs. See if additional training or mentoring is required."
+    },
+    {
+      "type": "burnout-risk",
+      "severity": "medium",
+      "employee": {
+        "id": "user-003",
+        "name": "Bob Smith",
+        "email": "bob@company.com"
+      },
+      "reasons": [
+        "78.25h logged (162% above average)",
+        "Active 6 days (86% of period)",
+        "Sustaining multiple project assignments"
+      ],
+      "recommendation": "Consider workload redistribution or additional support. Schedule check-in to discuss workload balance and prevent burnout."
+    }
+  ],
+  "employees": [
+    {
+      "id": "user-001",
+      "name": "Alice Johnson",
+      "email": "alice@company.com",
+      "role": "STAFF",
+      "hours": 62.5,
+      "reports": 3,
+      "tasksCompleted": 8,
+      "projects": [
+        "Website Redesign v2.0",
+        "Mobile App Launch"
+      ],
+      "daysActive": 6,
+      "avgHoursPerDay": 10.42,
+      "hasActivity": true
+    },
+    {
+      "id": "user-002",
+      "name": "Marcus Chen",
+      "email": "marcus@company.com",
+      "role": "STAFF",
+      "hours": 58.25,
+      "reports": 2,
+      "tasksCompleted": 7,
+      "projects": [
+        "Website Redesign v2.0",
+        "Backend API Improvements"
+      ],
+      "daysActive": 6,
+      "avgHoursPerDay": 9.71,
+      "hasActivity": true
+    },
+    {
+      "id": "user-003",
+      "name": "Bob Smith",
+      "email": "bob@company.com",
+      "role": "STAFF",
+      "hours": 78.25,
+      "reports": 2,
+      "tasksCompleted": 5,
+      "projects": [
+        "Mobile App Launch",
+        "Infrastructure Updates"
+      ],
+      "daysActive": 6,
+      "avgHoursPerDay": 13.04,
+      "hasActivity": true
+    },
+    {
+      "id": "user-004",
+      "name": "Charlie Brown",
+      "email": "charlie@company.com",
+      "role": "STAFF",
+      "hours": 35.0,
+      "reports": 2,
+      "tasksCompleted": 2,
+      "projects": [
+        "Documentation Updates"
+      ],
+      "daysActive": 5,
+      "avgHoursPerDay": 7.0,
+      "hasActivity": true
+    },
+    {
+      "id": "user-005",
+      "name": "Eve Wilson",
+      "email": "eve@company.com",
+      "role": "STAFF",
+      "hours": 40.75,
+      "reports": 1,
+      "tasksCompleted": 3,
+      "projects": [
+        "Quality Assurance"
+      ],
+      "daysActive": 5,
+      "avgHoursPerDay": 8.15,
+      "hasActivity": true
+    },
+    {
+      "id": "user-006",
+      "name": "Diana Prince",
+      "email": "diana@company.com",
+      "role": "STAFF",
+      "hours": 12.5,
+      "reports": 0,
+      "tasksCompleted": 0,
+      "projects": [],
+      "daysActive": 2,
+      "avgHoursPerDay": 6.25,
+      "hasActivity": false
+    },
+    {
+      "id": "user-007",
+      "name": "Frank Miller",
+      "email": "frank@company.com",
+      "role": "STAFF",
+      "hours": 18.5,
+      "reports": 1,
+      "tasksCompleted": 1,
+      "projects": [
+        "Marketing Campaign"
+      ],
+      "daysActive": 3,
+      "avgHoursPerDay": 6.17,
+      "hasActivity": true
+    },
+    {
+      "id": "user-008",
+      "name": "Grace Lee",
+      "email": "grace@company.com",
+      "role": "STAFF",
+      "hours": 45.5,
+      "reports": 1,
+      "tasksCompleted": 4,
+      "projects": [
+        "Website Redesign v2.0",
+        "Marketing Campaign"
+      ],
+      "daysActive": 5,
+      "avgHoursPerDay": 9.1,
+      "hasActivity": true
+    }
+  ],
+  "projects": [
+    {
+      "id": "proj-001",
+      "name": "Website Redesign v2.0",
+      "hours": 140.5,
+      "tasksCount": 12,
+      "contributors": 4
+    },
+    {
+      "id": "proj-002",
+      "name": "Mobile App Launch",
+      "hours": 85.75,
+      "tasksCount": 8,
+      "contributors": 2
+    },
+    {
+      "id": "proj-003",
+      "name": "Backend API Improvements",
+      "hours": 62.25,
+      "tasksCount": 4,
+      "contributors": 2
+    },
+    {
+      "id": "proj-004",
+      "name": "Infrastructure Updates",
+      "hours": 48.5,
+      "tasksCount": 3,
+      "contributors": 1
+    },
+    {
+      "id": "proj-005",
+      "name": "Quality Assurance",
+      "hours": 40.75,
+      "tasksCount": 1,
+      "contributors": 1
+    },
+    {
+      "id": "proj-006",
+      "name": "Documentation Updates",
+      "hours": 35.0,
+      "tasksCount": 2,
+      "contributors": 1
+    },
+    {
+      "id": "proj-007",
+      "name": "Marketing Campaign",
+      "hours": 18.5,
+      "tasksCount": 1,
+      "contributors": 2
+    }
+  ],
+  "missingReporters": []
+}

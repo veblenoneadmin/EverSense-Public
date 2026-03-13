@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 160" width="500" height="160">
+  <defs>
+    <linearGradient id="b1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#007acc"/>
+      <stop offset="100%" style="stop-color:#00d4ff"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2.5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Stacked squares icon -->
+  <!-- Back layer -->
+  <rect x="30" y="34" width="62" height="62" rx="8" fill="#050510" stroke="#007acc" stroke-width="1" opacity="0.3"/>
+  <!-- Mid layer -->
+  <rect x="39" y="43" width="62" height="62" rx="8" fill="#060612" stroke="#007acc" stroke-width="1" opacity="0.55"/>
+  <!-- Front layer -->
+  <rect x="48" y="52" width="62" height="62" rx="8" fill="#07071a" stroke="#007acc" stroke-width="1.5" filter="url(#glow)"/>
+  <!-- V on front -->
+  <path d="M63 67 L79 97 L95 67" stroke="url(#b1)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none" filter="url(#glow)"/>
+
+  <!-- Wordmark -->
+  <text x="132" y="97" font-family="'Segoe UI', sans-serif" font-size="52" font-weight="800" letter-spacing="-2">
+    <tspan fill="#c8c8c8">Veb</tspan><tspan fill="url(#b1)" filter="url(#glow)">Task</tspan>
+  </text>
+
+  <!-- Tagline -->
+  <circle cx="136" cy="118" r="2.5" fill="#007acc" opacity="0.5"/>
+  <text x="146" y="122" font-family="'Courier New', monospace" font-size="10" fill="#1e2e3e" letter-spacing="3">BY VEBLEN</text>
+</svg>

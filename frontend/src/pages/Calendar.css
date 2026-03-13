@@ -1,0 +1,163 @@
+/* FullCalendar VS Code Dark+ theme overrides */
+
+:root {
+  --fc-border-color: #3c3c3c;
+  --fc-button-bg-color: #2d2d2d;
+  --fc-button-border-color: #3c3c3c;
+  --fc-button-hover-bg-color: #333333;
+  --fc-button-hover-border-color: #454545;
+  --fc-button-active-bg-color: rgba(0, 122, 204, 0.2);
+  --fc-button-active-border-color: #007acc;
+  --fc-event-bg-color: #007acc;
+  --fc-event-border-color: transparent;
+  --fc-event-text-color: #f0f0f0;
+  --fc-today-bg-color: rgba(0, 122, 204, 0.07);
+  --fc-page-bg-color: #252526;
+  --fc-neutral-bg-color: #2d2d2d;
+  --fc-list-event-hover-bg-color: #333333;
+  --fc-highlight-color: rgba(0, 122, 204, 0.12);
+  --fc-non-business-color: rgba(0, 0, 0, 0.08);
+  --fc-now-indicator-color: #007acc;
+}
+
+/* Base text */
+.fc {
+  color: #c0c0c0;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+/* Column headers (Mon, Tue …) */
+.fc .fc-col-header-cell-cushion {
+  color: #909090;
+  font-weight: 500;
+  text-decoration: none !important;
+  padding: 6px 4px;
+}
+
+/* Day numbers */
+.fc .fc-daygrid-day-number {
+  color: #909090;
+  text-decoration: none !important;
+  font-size: 12px;
+  padding: 4px 6px;
+}
+
+.fc .fc-daygrid-day.fc-day-today .fc-daygrid-day-number {
+  color: #007acc;
+  font-weight: 700;
+}
+
+/* Toolbar buttons */
+.fc .fc-button {
+  text-transform: capitalize;
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 4px;
+  color: #c0c0c0;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.fc .fc-button:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.fc .fc-button-primary:not(:disabled).fc-button-active,
+.fc .fc-button-primary:not(:disabled):active {
+  color: #007acc;
+  border-color: #007acc;
+  background-color: rgba(0, 122, 204, 0.15);
+}
+
+/* Toolbar title */
+.fc .fc-toolbar-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #f0f0f0;
+}
+
+/* Time labels */
+.fc .fc-timegrid-slot-label-cushion,
+.fc .fc-timegrid-axis-cushion {
+  color: #909090;
+  font-size: 11px;
+}
+
+/* List view */
+.fc .fc-list-day-cushion {
+  background: #2d2d2d !important;
+  color: #c0c0c0;
+}
+
+.fc .fc-list-day-text,
+.fc .fc-list-day-side-text {
+  color: #909090 !important;
+  text-decoration: none !important;
+}
+
+.fc .fc-list-event-title a {
+  color: #c0c0c0 !important;
+  text-decoration: none !important;
+}
+
+.fc .fc-list-event:hover td {
+  background: #333333 !important;
+}
+
+.fc .fc-list-empty {
+  background: #252526;
+  color: #909090;
+}
+
+/* Cell & table borders */
+.fc .fc-scrollgrid { border-color: #3c3c3c !important; }
+.fc td, .fc th { border-color: #3c3c3c !important; }
+.fc .fc-scrollgrid-sync-table td { border-color: #3c3c3c !important; }
+
+/* Event dots/chips */
+.fc .fc-daygrid-event {
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 4px;
+  border: none;
+}
+
+.fc .fc-timegrid-event {
+  border-radius: 3px;
+  border: none;
+  font-size: 11px;
+}
+
+/* More link */
+.fc .fc-daygrid-more-link {
+  color: #007acc;
+  font-size: 11px;
+}
+
+/* Popover */
+.fc .fc-popover {
+  background: #252526;
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.fc .fc-popover-header {
+  background: #2d2d2d;
+  color: #c0c0c0;
+  border-bottom: 1px solid #3c3c3c;
+  border-radius: 6px 6px 0 0;
+  padding: 6px 10px;
+}
+
+.fc .fc-popover-body {
+  padding: 6px;
+}
+
+/* Dragging */
+.fc .fc-event-dragging {
+  opacity: 0.7;
+}

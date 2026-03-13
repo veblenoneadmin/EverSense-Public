@@ -1,0 +1,375 @@
+// Development Prisma schema file using SQLite
+// This is a copy of schema.prisma but with SQLite provider for local development
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Enums for role-based access control
+enum Role {
+  OWNER
+  ADMIN
+  STAFF
+  CLIENT
+}
+
+// User model for authentication
+model User {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  name        String?
+  image       String?
+  role        Role     @default(STAFF)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  lastLoginAt DateTime?
+  isActive    Boolean  @default(true)
+  
+  // Organization relationships
+  organizations    OrganizationMember[]
+  ownedOrganizations Organization[] @relation("OrganizationOwner")
+  
+  // Time tracking
+  timeLogs        TimeLog[]
+  
+  // Tasks assigned to user
+  assignedTasks   Task[]
+  
+  // Projects user is involved in
+  projectMembers  ProjectMember[]
+  
+  // Session management for better-auth
+  sessions        Session[]
+  accounts        Account[]
+  verifications   Verification[]
+}
+
+// Session model for better-auth
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// Account model for OAuth providers
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([provider, providerAccountId])
+}
+
+// Verification model for email verification, password reset, etc.
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String   // email or user ID
+  token      String   @unique
+  expires    DateTime
+  createdAt  DateTime @default(now())
+  userId     String?
+  
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([identifier, token])
+}
+
+// Organization model for multi-tenancy
+model Organization {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  settings    Json?    // Store org-specific settings
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  isActive    Boolean  @default(true)
+  
+  // Owner relationship
+  ownerId String
+  owner   User   @relation("OrganizationOwner", fields: [ownerId], references: [id])
+  
+  // Members
+  members OrganizationMember[]
+  
+  // Organization data
+  clients     Client[]
+  projects    Project[]
+  tasks       Task[]
+  timeLogs    TimeLog[]
+  invoices    Invoice[]
+  expenses    Expense[]
+}
+
+// Organization membership model
+model OrganizationMember {
+  id     String @id @default(cuid())
+  role   Role
+  userId String
+  orgId  String
+  
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@unique([userId, orgId])
+}
+
+// Client model
+model Client {
+  id          String   @id @default(cuid())
+  name        String
+  email       String?
+  phone       String?
+  address     String?
+  website     String?
+  notes       String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Organization relationship
+  orgId String
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  
+  // Projects for this client
+  projects Project[]
+  
+  // Invoices for this client
+  invoices Invoice[]
+}
+
+// Project status enum
+enum ProjectStatus {
+  planning
+  active
+  on_hold
+  completed
+  cancelled
+}
+
+// Project priority enum
+enum ProjectPriority {
+  low
+  medium
+  high
+}
+
+// Project model
+model Project {
+  id             String          @id @default(cuid())
+  name           String
+  description    String?
+  status         ProjectStatus   @default(planning)
+  priority       ProjectPriority @default(medium)
+  color          String          @default("#646cff")
+  budget         Float?
+  spent          Float           @default(0)
+  estimatedHours Int?
+  hoursLogged    Int             @default(0)
+  progress       Int             @default(0)
+  startDate      DateTime?
+  endDate        DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  
+  // Organization relationship
+  orgId String
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  
+  // Client relationship
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id])
+  
+  // Tasks in this project
+  tasks Task[]
+  
+  // Project members
+  members ProjectMember[]
+  
+  // Time logs for this project
+  timeLogs TimeLog[]
+  
+  // Expenses for this project
+  expenses Expense[]
+}
+
+// Project member model
+model ProjectMember {
+  id        String   @id @default(cuid())
+  role      String   @default("member") // project role, not system role
+  userId    String
+  projectId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, projectId])
+}
+
+// Task status enum
+enum TaskStatus {
+  not_started
+  in_progress
+  completed
+  cancelled
+}
+
+// Task priority enum  
+enum TaskPriority {
+  Low
+  Medium
+  High
+}
+
+// Task model
+model Task {
+  id          String       @id @default(cuid())
+  title       String
+  description String?
+  status      TaskStatus   @default(not_started)
+  priority    TaskPriority @default(Medium)
+  dueDate     DateTime?
+  completedAt DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  
+  // Organization relationship
+  orgId String
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  
+  // Project relationship
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id])
+  
+  // Assigned user
+  assignedUserId String?
+  assignedUser   User?   @relation(fields: [assignedUserId], references: [id])
+  
+  // Time logs for this task
+  timeLogs TimeLog[]
+}
+
+// Time log model
+model TimeLog {
+  id          String    @id @default(cuid())
+  description String?
+  startTime   DateTime
+  endTime     DateTime?
+  duration    Int?      // in minutes, calculated field
+  isRunning   Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  // Organization relationship
+  orgId String
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  
+  // User who logged the time
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Project relationship
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id])
+  
+  // Task relationship
+  taskId String?
+  task   Task?   @relation(fields: [taskId], references: [id])
+}
+
+// Invoice status enum
+enum InvoiceStatus {
+  draft
+  sent
+  paid
+  overdue
+  cancelled
+}
+
+// Invoice model
+model Invoice {
+  id           String        @id @default(cuid())
+  number       String        @unique
+  description  String?
+  amount       Float
+  taxAmount    Float         @default(0)
+  totalAmount  Float
+  status       InvoiceStatus @default(draft)
+  issueDate    DateTime      @default(now())
+  dueDate      DateTime?
+  paidDate     DateTime?
+  notes        String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  
+  // Organization relationship
+  orgId String
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  
+  // Client relationship
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id])
+}
+
+// Expense category enum
+enum ExpenseCategory {
+  travel
+  meals
+  supplies
+  software
+  hardware
+  marketing
+  other
+}
+
+// Expense model
+model Expense {
+  id          String          @id @default(cuid())
+  title       String
+  description String?
+  amount      Float
+  category    ExpenseCategory @default(other)
+  expenseDate DateTime        @default(now())
+  receipt     String?         // URL to receipt image
+  notes       String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  
+  // Organization relationship
+  orgId String
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  
+  // Project relationship
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id])
+}
