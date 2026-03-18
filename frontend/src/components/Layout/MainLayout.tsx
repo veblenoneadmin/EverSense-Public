@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useSession, authSignOut } from '../../lib/auth-client';
 import Sidebar from './Sidebar';
-import { LogOut, ChevronDown, Bell, CheckCheck, X, CheckSquare, AlertTriangle, Clock, CalendarDays, Users, Video, Info, Menu } from 'lucide-react';
+import { LogOut, ChevronDown, Bell, CheckCheck, X, CheckSquare, AlertTriangle, Clock, CalendarDays, Users, Video, Info, Menu, ArrowLeft, ExternalLink } from 'lucide-react';
 import { useSSE } from '../../hooks/useSSE';
 
 import { VS } from '../../lib/theme';
@@ -35,6 +35,7 @@ const pageTitles: Record<string, string> = {
 const MainLayout: React.FC = () => {
   const { data: session } = useSession();
   const location = useLocation();
+  const navigate = useNavigate();
   const [showDropdown, setShowDropdown] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userRole, setUserRole] = useState<string>('');
@@ -45,6 +46,7 @@ const MainLayout: React.FC = () => {
   const [notifications, setNotifications] = useState<Notif[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [selectedNotif, setSelectedNotif] = useState<Notif | null>(null);
 
   // Wall clock
   const [currentTime, setCurrentTime] = useState(nowClock());
@@ -131,13 +133,19 @@ const MainLayout: React.FC = () => {
     } catch { /* ignore */ }
   };
 
-  const handleNotifClick = async (notif: { id: string; link: string | null; isRead: boolean }) => {
+  const handleNotifClick = async (notif: Notif) => {
     if (!notif.isRead) {
-      await fetch(`/api/notifications/${notif.id}/read`, { method: 'PUT' });
+      fetch(`/api/notifications/${notif.id}/read`, { method: 'PUT' });
       setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, isRead: true } : n));
       setUnreadCount(prev => Math.max(0, prev - 1));
     }
-    if (notif.link) window.location.href = notif.link;
+    setSelectedNotif(notif);
+  };
+
+  const handleNotifNavigate = (link: string) => {
+    setShowNotifications(false);
+    setSelectedNotif(null);
+    navigate(link);
   };
 
   const timeAgo = (iso: string) => {
@@ -274,82 +282,146 @@ const MainLayout: React.FC = () => {
 
             {showNotifications && (
               <>
-                <div className="fixed inset-0 z-10" onClick={() => setShowNotifications(false)} />
+                <div className="fixed inset-0 z-10" onClick={() => { setShowNotifications(false); setSelectedNotif(null); }} />
                 <div
                   className="absolute right-0 top-full mt-2 w-[calc(100vw-1.5rem)] sm:w-80 rounded-xl z-20 overflow-hidden flex flex-col"
                   style={{ background: VS.bg1, border: `1px solid ${VS.border}`, boxShadow: '0 16px 48px rgba(0,0,0,0.7)', maxHeight: 420 }}
+                  onClick={e => e.stopPropagation()}
                 >
-                  {/* Header */}
-                  <div className="flex items-center justify-between px-4 py-2.5 shrink-0" style={{ borderBottom: `1px solid ${VS.border}` }}>
-                    <span className="text-[12px] font-semibold" style={{ color: VS.text0 }}>Notifications</span>
-                    <div className="flex items-center gap-2">
-                      {unreadCount > 0 && (
+                  {selectedNotif ? (
+                    /* ── Detail view ── */
+                    <>
+                      <div className="flex items-center justify-between px-4 py-2.5 shrink-0" style={{ borderBottom: `1px solid ${VS.border}` }}>
                         <button
-                          onClick={handleMarkAllRead}
-                          className="flex items-center gap-1 text-[11px] transition-colors"
-                          style={{ color: VS.accent }}
-                          onMouseEnter={e => (e.currentTarget as HTMLElement).style.opacity = '0.75'}
-                          onMouseLeave={e => (e.currentTarget as HTMLElement).style.opacity = '1'}
+                          onClick={() => setSelectedNotif(null)}
+                          className="flex items-center gap-1.5 text-[12px]"
+                          style={{ color: VS.text2 }}
+                          onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = VS.text0}
+                          onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = VS.text2}
                         >
-                          <CheckCheck className="h-3 w-3" />
-                          Mark all read
+                          <ArrowLeft className="h-3.5 w-3.5" />Back
                         </button>
-                      )}
-                      <button
-                        onClick={() => setShowNotifications(false)}
-                        className="flex h-5 w-5 items-center justify-center rounded"
-                        style={{ color: VS.text2 }}
-                        onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = VS.text0}
-                        onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = VS.text2}
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* List */}
-                  <div className="overflow-y-auto" style={{ maxHeight: 360 }}>
-                    {notifications.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center py-10 gap-2" style={{ color: VS.text2 }}>
-                        <Bell className="h-6 w-6 opacity-30" />
-                        <p className="text-[12px]">No notifications yet</p>
+                        <button onClick={() => { setShowNotifications(false); setSelectedNotif(null); }} style={{ color: VS.text2, background: 'none', border: 'none', cursor: 'pointer', display: 'flex' }}>
+                          <X className="h-3.5 w-3.5" />
+                        </button>
                       </div>
-                    ) : (
-                      notifications.map(n => {
-                        const meta = notifTypeMeta[n.type] ?? notifTypeMeta.info;
-                        const TypeIcon = meta.icon;
-                        return (
-                          <button
-                            key={n.id}
-                            onClick={() => handleNotifClick(n)}
-                            className="w-full text-left flex items-start gap-3 px-4 py-3 transition-colors duration-100"
-                            style={{
-                              background: n.isRead ? 'transparent' : `${VS.accent}0f`,
-                              borderBottom: `1px solid ${VS.border}`,
-                            }}
-                            onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = VS.bg2}
-                            onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = n.isRead ? 'transparent' : `${VS.accent}0f`}
-                          >
-                            {/* Type icon */}
-                            <div
-                              className="mt-0.5 h-6 w-6 shrink-0 rounded-md flex items-center justify-center"
-                              style={{ background: `${meta.color}20` }}
-                            >
-                              <TypeIcon className="h-3.5 w-3.5" style={{ color: meta.color }} />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <p className="text-[12px] font-medium leading-snug truncate" style={{ color: n.isRead ? VS.text1 : VS.text0 }}>{n.title}</p>
-                                {!n.isRead && <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: VS.accent }} />}
+                      <div className="flex flex-col gap-4 p-4">
+                        {/* Icon + type */}
+                        {(() => {
+                          const meta = notifTypeMeta[selectedNotif.type] ?? notifTypeMeta.info;
+                          const TypeIcon = meta.icon;
+                          return (
+                            <div className="flex items-center gap-3">
+                              <div className="h-9 w-9 shrink-0 rounded-lg flex items-center justify-center" style={{ background: `${meta.color}20` }}>
+                                <TypeIcon className="h-4.5 w-4.5" style={{ color: meta.color }} />
                               </div>
-                              {n.body && <p className="text-[11px] mt-0.5 line-clamp-2" style={{ color: VS.text2 }}>{n.body}</p>}
-                              <p className="text-[10px] mt-1" style={{ color: VS.text2 }}>{timeAgo(n.createdAt)}</p>
+                              <div>
+                                <p className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: meta.color }}>{selectedNotif.type}</p>
+                                <p className="text-[10px]" style={{ color: VS.text2 }}>{timeAgo(selectedNotif.createdAt)}</p>
+                              </div>
                             </div>
+                          );
+                        })()}
+                        {/* Title */}
+                        <p className="text-[14px] font-semibold leading-snug" style={{ color: VS.text0 }}>{selectedNotif.title}</p>
+                        {/* Body */}
+                        {selectedNotif.body && (
+                          <p className="text-[13px] leading-relaxed" style={{ color: VS.text1, background: VS.bg2, borderRadius: 8, padding: '10px 12px' }}>
+                            {selectedNotif.body}
+                          </p>
+                        )}
+                        {/* CTA */}
+                        {(() => {
+                          const typeLinkMap: Record<string, string> = {
+                            task: '/tasks', comment: '/tasks', due_soon: '/tasks', overdue: '/tasks',
+                            project: '/projects', calendar: '/calendar', meeting: '/calendar',
+                            member: '/admin',
+                          };
+                          const dest = selectedNotif.link || typeLinkMap[selectedNotif.type] || '/dashboard';
+                          return (
+                            <button
+                              onClick={() => handleNotifNavigate(dest)}
+                              className="flex items-center justify-center gap-2 w-full py-2 rounded-lg text-[13px] font-semibold transition-opacity"
+                              style={{ background: VS.accent, color: '#fff', border: 'none', cursor: 'pointer' }}
+                              onMouseEnter={e => (e.currentTarget as HTMLElement).style.opacity = '0.85'}
+                              onMouseLeave={e => (e.currentTarget as HTMLElement).style.opacity = '1'}
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" />
+                              Go to page
+                            </button>
+                          );
+                        })()}
+                      </div>
+                    </>
+                  ) : (
+                    /* ── List view ── */
+                    <>
+                      <div className="flex items-center justify-between px-4 py-2.5 shrink-0" style={{ borderBottom: `1px solid ${VS.border}` }}>
+                        <span className="text-[12px] font-semibold" style={{ color: VS.text0 }}>Notifications</span>
+                        <div className="flex items-center gap-2">
+                          {unreadCount > 0 && (
+                            <button
+                              onClick={handleMarkAllRead}
+                              className="flex items-center gap-1 text-[11px] transition-colors"
+                              style={{ color: VS.accent }}
+                              onMouseEnter={e => (e.currentTarget as HTMLElement).style.opacity = '0.75'}
+                              onMouseLeave={e => (e.currentTarget as HTMLElement).style.opacity = '1'}
+                            >
+                              <CheckCheck className="h-3 w-3" />
+                              Mark all read
+                            </button>
+                          )}
+                          <button
+                            onClick={() => setShowNotifications(false)}
+                            className="flex h-5 w-5 items-center justify-center rounded"
+                            style={{ color: VS.text2 }}
+                            onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = VS.text0}
+                            onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = VS.text2}
+                          >
+                            <X className="h-3.5 w-3.5" />
                           </button>
-                        );
-                      })
-                    )}
-                  </div>
+                        </div>
+                      </div>
+                      <div className="overflow-y-auto" style={{ maxHeight: 360 }}>
+                        {notifications.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center py-10 gap-2" style={{ color: VS.text2 }}>
+                            <Bell className="h-6 w-6 opacity-30" />
+                            <p className="text-[12px]">No notifications yet</p>
+                          </div>
+                        ) : (
+                          notifications.map(n => {
+                            const meta = notifTypeMeta[n.type] ?? notifTypeMeta.info;
+                            const TypeIcon = meta.icon;
+                            return (
+                              <button
+                                key={n.id}
+                                onClick={() => handleNotifClick(n)}
+                                className="w-full text-left flex items-start gap-3 px-4 py-3 transition-colors duration-100"
+                                style={{
+                                  background: n.isRead ? 'transparent' : `${VS.accent}0f`,
+                                  borderBottom: `1px solid ${VS.border}`,
+                                }}
+                                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = VS.bg2}
+                                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = n.isRead ? 'transparent' : `${VS.accent}0f`}
+                              >
+                                <div className="mt-0.5 h-6 w-6 shrink-0 rounded-md flex items-center justify-center" style={{ background: `${meta.color}20` }}>
+                                  <TypeIcon className="h-3.5 w-3.5" style={{ color: meta.color }} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <p className="text-[12px] font-medium leading-snug truncate" style={{ color: n.isRead ? VS.text1 : VS.text0 }}>{n.title}</p>
+                                    {!n.isRead && <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: VS.accent }} />}
+                                  </div>
+                                  {n.body && <p className="text-[11px] mt-0.5 line-clamp-2" style={{ color: VS.text2 }}>{n.body}</p>}
+                                  <p className="text-[10px] mt-1" style={{ color: VS.text2 }}>{timeAgo(n.createdAt)}</p>
+                                </div>
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
               </>
             )}
@@ -364,12 +436,16 @@ const MainLayout: React.FC = () => {
               onMouseLeave={e => { if (!showDropdown) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
             >
               {/* Avatar */}
-              <div
-                className="h-7 w-7 rounded-full flex items-center justify-center text-[11px] font-bold text-white shrink-0"
-                style={{ background: 'linear-gradient(135deg, hsl(252 87% 62%), hsl(260 80% 70%))' }}
-              >
-                {getInitials(displayName)}
-              </div>
+              {session?.user?.image
+                ? <img src={session.user.image} alt={displayName}
+                    className="h-7 w-7 rounded-full object-cover shrink-0 ring-1 ring-white/20" />
+                : <div
+                    className="h-7 w-7 rounded-full flex items-center justify-center text-[11px] font-bold text-white shrink-0"
+                    style={{ background: 'linear-gradient(135deg, hsl(252 87% 62%), hsl(260 80% 70%))' }}
+                  >
+                    {getInitials(displayName)}
+                  </div>
+              }
               <div className="text-left leading-tight hidden sm:block">
                 <p className="text-[12px] font-medium capitalize" style={{ color: VS.text0 }}>{displayName}</p>
                 {userRole && (

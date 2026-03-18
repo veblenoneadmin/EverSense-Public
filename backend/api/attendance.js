@@ -177,7 +177,7 @@ router.get('/logs', requireAuth, withOrgScope, async (req, res) => {
       select: { role: true },
     });
     const role         = membership?.role || 'STAFF';
-    const isPrivileged = role === 'OWNER' || role === 'ADMIN';
+    const isPrivileged = role === 'OWNER' || role === 'ADMIN' || role === 'HALL_OF_JUSTICE';
     const isClient     = role === 'CLIENT';
 
     // CLIENT — build list of staff userIds assigned to their projects
@@ -419,6 +419,102 @@ router.get('/history', requireAuth, withOrgScope, async (req, res) => {
   } catch (err) {
     console.error('[Attendance] history error:', err);
     res.status(500).json({ error: 'Failed to fetch history' });
+  }
+});
+
+// ── PATCH /api/attendance/logs/:id/break — admin sets break duration ──────────
+router.patch('/logs/:id/break', requireAuth, withOrgScope, async (req, res) => {
+  try {
+    const orgId = req.orgId;
+
+    // Only ADMIN / OWNER / HALL_OF_JUSTICE may edit breaks
+    const membership = await prisma.$queryRawUnsafe(
+      'SELECT role FROM memberships WHERE userId = ? AND orgId = ? LIMIT 1',
+      req.user.id, orgId
+    );
+    const role = membership[0]?.role || 'STAFF';
+    if (!['OWNER', 'ADMIN', 'HALL_OF_JUSTICE'].includes(role)) {
+      return res.status(403).json({ error: 'Not authorised' });
+    }
+
+    const { breakHours = 0, breakMinutes = 0 } = req.body;
+    const breakSecs = Math.max(0, Math.floor(Number(breakHours) * 3600 + Number(breakMinutes) * 60));
+
+    // Fetch the log to recalculate net duration
+    const rows = await prisma.$queryRawUnsafe(
+      'SELECT id, orgId, timeIn, timeOut FROM attendance_logs WHERE id = ? AND orgId = ? LIMIT 1',
+      req.params.id, orgId
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Log not found' });
+
+    const log = rows[0];
+    let duration = 0;
+    if (log.timeOut) {
+      const gross = Math.floor((new Date(log.timeOut).getTime() - new Date(log.timeIn).getTime()) / 1000);
+      duration = Math.max(0, gross - breakSecs);
+    }
+
+    await prisma.$executeRawUnsafe(
+      'UPDATE attendance_logs SET breakDuration = ?, duration = ?, updatedAt = NOW(3) WHERE id = ? AND orgId = ?',
+      breakSecs, duration, log.id, orgId
+    );
+
+    res.json({ success: true, breakDuration: breakSecs, duration });
+  } catch (err) {
+    console.error('[Attendance] patch break error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/attendance/policy — get org break policy ────────────────────────
+router.get('/policy', requireAuth, withOrgScope, async (req, res) => {
+  try {
+    const rows = await prisma.$queryRawUnsafe(
+      'SELECT `key`, `value` FROM `org_integrations` WHERE orgId = ? AND `key` IN (?, ?)',
+      req.orgId, 'break_limit_secs', 'break_count_per_day'
+    );
+    const map = Object.fromEntries(rows.map(r => [r.key, r.value]));
+    res.json({
+      breakLimitSecs:    parseInt(map.break_limit_secs   ?? '1800'),
+      breakCountPerDay:  parseInt(map.break_count_per_day ?? '1'),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── PUT /api/attendance/policy — admin saves org break policy ─────────────────
+router.put('/policy', requireAuth, withOrgScope, async (req, res) => {
+  try {
+    const membership = await prisma.$queryRawUnsafe(
+      'SELECT role FROM memberships WHERE userId = ? AND orgId = ? LIMIT 1',
+      req.user.id, req.orgId
+    );
+    const role = membership[0]?.role || 'STAFF';
+    if (!['OWNER', 'ADMIN', 'HALL_OF_JUSTICE'].includes(role)) {
+      return res.status(403).json({ error: 'Not authorised' });
+    }
+
+    const { breakLimitSecs, breakCountPerDay } = req.body;
+    const limitSecs = Math.max(0, parseInt(breakLimitSecs) || 1800);
+    const countDay  = Math.max(1, parseInt(breakCountPerDay) || 1);
+
+    const upsert = async (key, value) => {
+      const { randomBytes } = await import('crypto');
+      const id = randomBytes(8).toString('hex');
+      await prisma.$executeRawUnsafe(
+        'INSERT INTO `org_integrations` (id, orgId, `key`, `value`) VALUES (?, ?, ?, ?) ' +
+        'ON DUPLICATE KEY UPDATE `value` = VALUES(`value`), updatedAt = NOW(3)',
+        id, req.orgId, key, String(value)
+      );
+    };
+
+    await upsert('break_limit_secs',    limitSecs);
+    await upsert('break_count_per_day', countDay);
+
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 

@@ -116,7 +116,13 @@ export function Attendance() {
   const [onBreak, setOnBreak] = useState(() => !!localStorage.getItem('att_break_start'));
   const [breakAccum, setBreakAccum] = useState(() => Number(localStorage.getItem('att_break_accum') || 0));
   const todayStr = () => new Date().toISOString().slice(0, 10);
-  const [breakUsed, setBreakUsed] = useState(() => localStorage.getItem('att_break_used') === new Date().toISOString().slice(0, 10));
+  const [_breakUsed, setBreakUsed] = useState(() => localStorage.getItem('att_break_used') === new Date().toISOString().slice(0, 10));
+  const [breaksTakenToday, setBreaksTakenToday] = useState(() => {
+    const valid = localStorage.getItem('att_break_used') === new Date().toISOString().slice(0, 10);
+    return valid ? parseInt(localStorage.getItem('att_break_count') || '0') : 0;
+  });
+  const [_breakLimitSecs, setBreakLimitSecs] = useState(1800);
+  const [breakCountPerDay, setBreakCountPerDay] = useState(1);
 
   const userId = session?.user?.id;
   const orgId = currentOrg?.id;
@@ -155,6 +161,14 @@ export function Attendance() {
   }, [fetchStatus, fetchToday, fetchHistory]);
 
   useEffect(() => { if (userId) loadAll(); }, [userId, orgId, loadAll]);
+
+  useEffect(() => {
+    if (!orgId) return;
+    fetch(`/api/attendance/policy?orgId=${orgId}`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) { setBreakLimitSecs(d.breakLimitSecs ?? 1800); setBreakCountPerDay(d.breakCountPerDay ?? 1); } })
+      .catch(() => {});
+  }, [orgId]);
 
   // Live clock tick
   useEffect(() => {
@@ -225,7 +239,7 @@ export function Attendance() {
 
   const handleBreak = () => {
     if (!active) return;
-    if (breakUsed && !onBreak) return; // already used today
+    if (!onBreak && breaksTakenToday >= breakCountPerDay) return;
     if (!onBreak) {
       localStorage.setItem('att_break_start', String(Date.now()));
       localStorage.setItem('att_break_used', todayStr());
@@ -239,6 +253,9 @@ export function Attendance() {
       localStorage.setItem('att_break_accum', String(newAccum));
       localStorage.removeItem('att_break_start');
       setBreakAccum(newAccum);
+      const newCount = breaksTakenToday + 1;
+      localStorage.setItem('att_break_count', String(newCount));
+      setBreaksTakenToday(newCount);
       setOnBreak(false);
       resumeTaskTimer();
     }
@@ -440,8 +457,8 @@ export function Attendance() {
                 <div>
                   <button
                     onClick={handleBreak}
-                    disabled={actionLoading || (breakUsed && !onBreak)}
-                    title={breakUsed && !onBreak ? 'You can only take 1 break per day' : undefined}
+                    disabled={actionLoading || (!onBreak && breaksTakenToday >= breakCountPerDay)}
+                    title={!onBreak && breaksTakenToday >= breakCountPerDay ? `Break limit reached (${breakCountPerDay}/day)` : undefined}
                     style={{
                       width: '100%',
                       padding: '12px 0',
@@ -453,8 +470,8 @@ export function Attendance() {
                       color: '#fff',
                       fontSize: 14,
                       fontWeight: 700,
-                      cursor: (actionLoading || (breakUsed && !onBreak)) ? 'not-allowed' : 'pointer',
-                      opacity: (actionLoading || (breakUsed && !onBreak)) ? 0.4 : 1,
+                      cursor: (actionLoading || (!onBreak && breaksTakenToday >= breakCountPerDay)) ? 'not-allowed' : 'pointer',
+                      opacity: (actionLoading || (!onBreak && breaksTakenToday >= breakCountPerDay)) ? 0.4 : 1,
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -462,14 +479,14 @@ export function Attendance() {
                       transition: 'opacity 0.2s, transform 0.1s',
                       fontFamily: 'Inter, sans-serif',
                     }}
-                    onMouseOver={e => { if (!actionLoading && !(breakUsed && !onBreak)) (e.currentTarget.style.transform = 'translateY(-1px)'); }}
+                    onMouseOver={e => { if (!actionLoading && !(!onBreak && breaksTakenToday >= breakCountPerDay)) (e.currentTarget.style.transform = 'translateY(-1px)'); }}
                     onMouseOut={e => (e.currentTarget.style.transform = 'translateY(0)')}
                   >
                     {onBreak ? '▶ Resume' : '⏸ Take Break'}
                   </button>
-                  {breakUsed && !onBreak && (
+                  {!onBreak && breaksTakenToday >= breakCountPerDay && (
                     <p style={{ fontSize: 11, color: 'hsl(0 84% 65%)', margin: '6px 0 0', textAlign: 'center' }}>
-                      You can only take 1 break per day
+                      Break limit reached ({breakCountPerDay} per day)
                     </p>
                   )}
                 </div>

@@ -18,10 +18,11 @@ async function saFetch(url: string, options: RequestInit = {}) {
 }
 
 const ROLE_CFG: Record<string, { color: string; label: string }> = {
-  OWNER:  { color: VS.yellow, label: 'Owner'  },
-  ADMIN:  { color: VS.blue,   label: 'Admin'  },
-  STAFF:  { color: VS.teal,   label: 'Staff'  },
-  CLIENT: { color: VS.text2,  label: 'Client' },
+  OWNER:           { color: VS.yellow,  label: 'Owner'          },
+  ADMIN:           { color: VS.blue,    label: 'Admin'          },
+  STAFF:           { color: VS.teal,    label: 'Staff'          },
+  CLIENT:          { color: VS.text2,   label: 'Client'         },
+  HALL_OF_JUSTICE: { color: '#f59e0b',  label: 'Hall of Justice' },
 };
 
 const inputCls = 'w-full px-3 py-2 rounded-lg text-[13px] focus:outline-none focus:ring-1 focus:ring-[#007acc]/50 transition-all';

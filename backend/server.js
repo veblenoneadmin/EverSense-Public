@@ -27,14 +27,17 @@ import invitationRoutes from './api/invitations.js';
 import skillsRoutes from './api/skills.js';
 import attendanceRoutes from './api/attendance.js';
 import calendarRoutes from './api/calendar.js';
+import usersRoutes from './api/users.js';
 import kpiReportRoutes from './api/kpi-report.js';
 import notificationsRoutes from './api/notifications.js';
 import firefliesRoutes, { startFirefliesPolling } from './api/fireflies.js';
 import eventsRoutes from './api/events.js';
 import leavesRoutes from './api/leaves.js';
 import apikeysRoutes from './api/apikeys.js';
+import integrationsRoutes from './api/integrations.js';
 import superAdminRoutes, { logError } from './api/super-admin.js';
 import { startNotificationScheduler } from './services/notificationScheduler.js';
+import { startAttendanceCron } from './lib/attendance-cron.js';
 import {
   blockPublicRegistration, 
   addInternalBranding, 
@@ -165,6 +168,131 @@ app.get('/test', (req, res) => {
   res.json({ message: 'Server is working!' });
 });
 
+// Temp: manually trigger clockout and return full result
+app.get('/run-clockout', async (req, res) => {
+  const hours = Number(req.query.hours) || 1.5;
+  const threshSec = hours * 3600;
+  const log = [];
+  try {
+    const overdue = await prisma.$queryRawUnsafe(
+      `SELECT id, userId, orgId, timeIn FROM attendance_logs WHERE timeOut IS NULL AND timeIn <= DATE_SUB(NOW(), INTERVAL ${threshSec} SECOND)`
+    );
+    log.push(`found ${overdue.length} overdue sessions (threshold: ${hours}h)`);
+    for (const row of overdue) {
+      try {
+        const affected = await prisma.$executeRawUnsafe(
+          `UPDATE attendance_logs SET timeOut = NOW(3), duration = TIMESTAMPDIFF(SECOND, timeIn, NOW(3)), updatedAt = NOW(3) WHERE id = ? AND timeOut IS NULL`,
+          row.id
+        );
+        log.push(`session ${row.id}: rowsAffected=${Number(affected)}`);
+        try { broadcast(row.orgId, 'attendance', { action: 'clock-out', userId: row.userId }); } catch {}
+      } catch (e) { log.push(`session ${row.id} ERROR: ${e.message}`); }
+    }
+    res.json({ ok: true, log });
+  } catch (e) { res.json({ ok: false, error: e.message, log }); }
+});
+
+// Temp: diagnose attendance cron
+app.get('/debug-attendance', async (req, res) => {
+  try {
+    const open = await prisma.$queryRawUnsafe(
+      `SELECT id, userId, orgId, timeIn, TIMESTAMPDIFF(SECOND, timeIn, NOW()) as elapsedSeconds
+       FROM attendance_logs WHERE timeOut IS NULL ORDER BY timeIn ASC`
+    );
+    const sessions = open.map(r => ({ ...r, elapsedSeconds: Number(r.elapsedSeconds), elapsedHours: (Number(r.elapsedSeconds) / 3600).toFixed(1) }));
+    const overdue = sessions.filter(r => r.elapsedSeconds >= 12 * 3600);
+    res.json({ openSessions: sessions.length, overdueSessions: overdue.length, sessions, serverNow: new Date() });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Temp: reopen a session that was incorrectly force-clocked out
+// POST /reopen-session?sessionId=xxx  OR  ?email=prans@example.com
+app.post('/reopen-session', async (req, res) => {
+  try {
+    const { sessionId, email } = req.query;
+    if (sessionId) {
+      await prisma.$executeRawUnsafe(
+        `UPDATE attendance_logs SET timeOut = NULL, duration = 0, updatedAt = NOW(3) WHERE id = ?`,
+        sessionId
+      );
+      return res.json({ success: true, reopened: sessionId });
+    }
+    if (email) {
+      // Find the most recently closed session today for this user
+      const users = await prisma.$queryRawUnsafe(`SELECT id FROM \`User\` WHERE email = ? LIMIT 1`, email);
+      if (!users.length) return res.status(404).json({ error: 'User not found' });
+      const userId = users[0].id;
+      const rows = await prisma.$queryRawUnsafe(
+        `SELECT id FROM attendance_logs WHERE userId = ? AND DATE(timeIn) = CURDATE() ORDER BY timeIn DESC LIMIT 1`,
+        userId
+      );
+      if (!rows.length) return res.status(404).json({ error: 'No session found today for this user' });
+      await prisma.$executeRawUnsafe(
+        `UPDATE attendance_logs SET timeOut = NULL, duration = 0, updatedAt = NOW(3) WHERE id = ?`,
+        rows[0].id
+      );
+      return res.json({ success: true, reopened: rows[0].id, userId });
+    }
+    res.status(400).json({ error: 'Provide sessionId or email query param' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Temp: force clock-out all sessions open longer than X hours (default 12)
+app.post('/force-clockout', async (req, res) => {
+  try {
+    const hours = Number(req.query.hours) || 12;
+    const thresholdSeconds = hours * 3600;
+    const open = await prisma.$queryRawUnsafe(
+      `SELECT id, userId, orgId, timeIn,
+              TIMESTAMPDIFF(SECOND, timeIn, NOW()) as elapsedSeconds
+       FROM attendance_logs
+       WHERE timeOut IS NULL
+         AND timeIn <= DATE_SUB(NOW(), INTERVAL ${thresholdSeconds} SECOND)`
+    );
+    const results = [];
+    for (const row of open) {
+      const now = new Date();
+      const elapsed = Number(row.elapsedSeconds);
+      const affected = await prisma.$executeRawUnsafe(
+        `UPDATE attendance_logs SET timeOut = ?, duration = ?, updatedAt = NOW(3) WHERE id = ? AND timeOut IS NULL`,
+        now, elapsed, row.id
+      );
+      results.push({ id: row.id, userId: row.userId, timeIn: row.timeIn, elapsedHours: (elapsed / 3600).toFixed(1), rowsAffected: Number(affected) });
+    }
+    res.json({ clocked_out: results.length, sessions: results });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Temp: diagnose admin login
+app.get('/debug-admin', async (req, res) => {
+  try {
+    const { verifyPassword } = await import('better-auth/crypto');
+    const user = await prisma.user.findUnique({ where: { email: 'admin@eversense.ai' }, select: { id: true, email: true } });
+    if (!user) return res.json({ step: 'user_not_found' });
+
+    const accounts = await prisma.account.findMany({ where: { userId: user.id }, select: { id: true, providerId: true, password: true } });
+    const credential = accounts.find(a => a.providerId === 'credential');
+
+    if (!credential) return res.json({ step: 'no_credential_account', accounts: accounts.map(a => a.providerId) });
+    if (!credential.password) return res.json({ step: 'no_password', providerId: credential.providerId });
+
+    const testPassword = process.env.ADMIN_SETUP_PASSWORD || 'Admin@EverSense2025!';
+    const valid = await verifyPassword({ hash: credential.password, password: testPassword });
+
+    res.json({
+      step: 'done',
+      userId: user.id,
+      accounts: accounts.map(a => a.providerId),
+      hashFormat: credential.password.includes(':') ? 'scrypt(ok)' : 'unknown(bad)',
+      passwordVerifies: valid,
+      testPassword
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
 // Add logging middleware for auth routes
 app.use('/api/auth', (req, res, next) => {
   console.log(`🔐 Auth ${req.method} ${req.originalUrl}`, {
@@ -281,6 +409,7 @@ app.use('/api', async (req, res, next) => {
       '/api/system/info',
       '/api/health',
       '/api/ai/',
+      '/api/integrations/google/callback',
       '/test'
     ];
 
@@ -380,12 +509,14 @@ app.use('/api/invitations', invitationRoutes);
 app.use('/api/skills', skillsRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/calendar', calendarRoutes);
+app.use('/api/users', usersRoutes);
 app.use('/api/kpi-report', kpiReportRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/fireflies', firefliesRoutes);
 app.use('/api/events', eventsRoutes);
 app.use('/api/leaves', leavesRoutes);
 app.use('/api/apikeys', apikeysRoutes);
+app.use('/api/integrations', integrationsRoutes);
 app.use('/api/super-admin', superAdminRoutes);
 
 // Test routes for debugging (NO AUTH - REMOVE IN PRODUCTION)
@@ -3022,18 +3153,100 @@ async function ensureProfileColumns() {
       if (!rows.length) await prisma.$executeRawUnsafe(`ALTER TABLE \`${tbl}\` ADD COLUMN \`${col}\` ${def}`);
     } catch { /* column already exists or table not ready */ }
   }
+  // Widen User.image to MEDIUMTEXT so base64 avatars fit
+  try {
+    await prisma.$executeRawUnsafe('ALTER TABLE `User` MODIFY COLUMN `image` MEDIUMTEXT NULL');
+  } catch { /* already widened or table not ready */ }
   console.log('  ✅ profile columns ready');
+}
+
+async function ensureRoleEnumSchema() {
+  if (!process.env.DATABASE_URL) return;
+  try {
+    // Idempotent: re-declares the ENUM with all values including HALL_OF_JUSTICE.
+    // MySQL silently no-ops if the column already has all values.
+    await prisma.$executeRawUnsafe(
+      "ALTER TABLE `memberships` MODIFY COLUMN `role` ENUM('OWNER','ADMIN','STAFF','CLIENT','HALL_OF_JUSTICE') NOT NULL DEFAULT 'STAFF'"
+    );
+    await prisma.$executeRawUnsafe(
+      "ALTER TABLE `invites` MODIFY COLUMN `role` ENUM('OWNER','ADMIN','STAFF','CLIENT','HALL_OF_JUSTICE') NOT NULL DEFAULT 'STAFF'"
+    );
+    console.log('  ✅ role enum columns ready (HALL_OF_JUSTICE included)');
+  } catch (e) {
+    console.warn('  ⚠️  ensureRoleEnumSchema:', e.message);
+  }
+}
+
+// Ensure admin@eversense.ai has a valid scrypt credential account
+async function ensureAdminCredentialAccount() {
+  try {
+    const user = await prisma.user.findUnique({ where: { email: 'admin@eversense.ai' }, select: { id: true } });
+    if (!user) { console.log('  ⚠️  admin@eversense.ai user not found in DB'); return; }
+
+    const { hashPassword } = await import('better-auth/crypto');
+    const { randomUUID } = await import('crypto');
+    const pw = process.env.ADMIN_SETUP_PASSWORD || 'Admin@EverSense2025!';
+    const hashed = await hashPassword(pw);
+
+    // List all accounts for diagnostics
+    const allAccounts = await prisma.account.findMany({ where: { userId: user.id }, select: { id: true, providerId: true } });
+    console.log(`  ℹ️  admin accounts in DB: ${JSON.stringify(allAccounts.map(a => a.providerId))}`);
+
+    const credentialAccount = allAccounts.find(a => a.providerId === 'credential');
+    if (credentialAccount) {
+      await prisma.account.update({ where: { id: credentialAccount.id }, data: { password: hashed } });
+      console.log('  ✅ admin@eversense.ai credential password reset');
+    } else {
+      await prisma.account.deleteMany({ where: { userId: user.id, providerId: { in: ['email-password', 'email'] } } });
+      await prisma.account.create({
+        data: { id: randomUUID(), accountId: user.id, userId: user.id, providerId: 'credential', password: hashed, createdAt: new Date(), updatedAt: new Date() }
+      });
+      console.log('  ✅ admin@eversense.ai credential account created');
+    }
+  } catch (e) {
+    console.warn('  ⚠️  ensureAdminCredentialAccount error:', e.message);
+  }
 }
 
 // Run migrations and start server
 async function startServer() {
   await runDatabaseMigrations();
+  await ensureRoleEnumSchema();
   await ensureTaskTablesSchema();
   await ensureTaskAssigneesSchema();
   await ensureAccountScopeText();
   await ensureProfileColumns();
+  await ensureAdminCredentialAccount();
   startFirefliesPolling().catch(e => console.warn('[Fireflies] Polling init error:', e.message));
   startNotificationScheduler();
+  startAttendanceCron();
+
+  // Inline attendance auto-clockout (backup — runs directly in server process)
+  const AUTO_CLOCKOUT_SEC = 1.5 * 3600; // TEST: 1h 30m
+  async function runInlineClockout() {
+    if (!process.env.DATABASE_URL) return;
+    try {
+      const overdue = await prisma.$queryRawUnsafe(
+        `SELECT id, userId, orgId, timeIn FROM attendance_logs WHERE timeOut IS NULL AND timeIn <= DATE_SUB(NOW(), INTERVAL ${AUTO_CLOCKOUT_SEC} SECOND)`
+      );
+      if (!overdue.length) return;
+      console.log(`[InlineClockout] Found ${overdue.length} overdue session(s)`);
+      for (const row of overdue) {
+        try {
+          // Use NOW() and TIMESTAMPDIFF entirely in SQL — no JS Date params to avoid type issues
+          const affected = await prisma.$executeRawUnsafe(
+            `UPDATE attendance_logs SET timeOut = NOW(3), duration = TIMESTAMPDIFF(SECOND, timeIn, NOW(3)), updatedAt = NOW(3) WHERE id = ? AND timeOut IS NULL`,
+            row.id
+          );
+          console.log(`[InlineClockout] Closed session ${row.id} (${row.userId}), rows affected: ${Number(affected)}`);
+          try { broadcast(row.orgId, 'attendance', { action: 'clock-out', userId: row.userId }); } catch {}
+        } catch (e) { console.error(`[InlineClockout] Row error ${row.id}:`, e.message); }
+      }
+    } catch (e) { console.error('[InlineClockout] Error:', e.message); }
+  }
+  runInlineClockout();
+  setInterval(runInlineClockout, 60 * 1000);
+  console.log('  ✅ Inline attendance clockout running (every 1 min, limit: 9h30m)');
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`✅ Server running on port ${PORT}`);

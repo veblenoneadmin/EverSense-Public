@@ -288,6 +288,7 @@ enum Role {
   ADMIN
   STAFF
   CLIENT
+  HALL_OF_JUSTICE
 }
 
 enum InviteStatus {

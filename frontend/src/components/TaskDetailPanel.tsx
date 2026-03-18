@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useSession } from '../lib/auth-client';
 import { useApiClient } from '../lib/api-client';
 import {
   X, MessageSquare, Paperclip, Send, Trash2, Download,
-  Calendar, Clock, Tag, Folder, User, AlertTriangle,
-  FileText, Image, File, ChevronRight, Upload, CheckSquare, Check,
+  Calendar, Clock, Tag, Folder, User, Users, AlertTriangle,
+  FileText, Image, File, ChevronRight, ChevronLeft, Upload, CheckSquare, Check,
 } from 'lucide-react';
 
 import { VS } from '../lib/theme';
@@ -25,6 +26,10 @@ interface Task {
   isBillable: boolean;
   tags: string[];
   createdAt: string;
+  isTeamTask?: boolean;
+  mainAssigneeId?: string | null;
+  parentTaskId?: string | null;
+  assignees?: { id: string; name: string; email: string }[];
 }
 
 interface Comment {
@@ -114,10 +119,19 @@ export function TaskDetailPanel({ task, orgId: _orgId, onClose, onTaskUpdated: _
   const [showReport, setShowReport]       = useState(false);
   const [reportTitle, setReportTitle]     = useState('');
   const [reportDesc, setReportDesc]       = useState('');
-  const [reportFiles, setReportFiles]     = useState<File[]>([]);
+  const [reportFiles, setReportFiles]     = useState<{ name: string; type: string; dataUrl: string; file: File }[]>([]);
+  const [reportLightbox, setReportLightbox] = useState<number | null>(null);
+  const [reportDragOver, setReportDragOver] = useState(false);
   const [submittingReport, setSubmitting] = useState(false);
   const [reportSuccess, setReportSuccess] = useState(false);
   const reportFileRef = useRef<HTMLInputElement>(null);
+
+  // Team task checklist
+  const [checklist, setChecklist] = useState<{
+    id: string; assigneeId: string; assigneeName: string; assigneeEmail: string;
+    title: string; completed: boolean; completedAt?: string;
+  }[]>([]);
+  const [checklistLoading, setCLLoading] = useState(false);
 
   // ── Fetch comments ────────────────────────────────────────────────────────
   const fetchComments = async (): Promise<number> => {
@@ -143,10 +157,29 @@ export function TaskDetailPanel({ task, orgId: _orgId, onClose, onTaskUpdated: _
     finally { setAL(false); }
   };
 
+  const fetchChecklist = async (silent = false) => {
+    if (!task.isTeamTask) return;
+    if (!silent) setCLLoading(true);
+    try {
+      const data = await api.fetch(`/api/tasks/${task.id}/checklist`);
+      setChecklist(data.items ?? []);
+    } catch { /* ignore */ }
+    finally { if (!silent) setCLLoading(false); }
+  };
+
   useEffect(() => {
     Promise.all([fetchComments(), fetchAttachments()]).then(([cc, ac]) => {
       onCountsLoaded?.(task.id, cc, ac);
     });
+    fetchChecklist();
+
+    // Poll checklist every 15s so completed sub-tasks auto-check
+    if (task.isTeamTask) {
+      const interval = setInterval(() => {
+        fetchChecklist(true);
+      }, 15000);
+      return () => clearInterval(interval);
+    }
   }, [task.id]);
 
   useEffect(() => {
@@ -214,6 +247,20 @@ export function TaskDetailPanel({ task, orgId: _orgId, onClose, onTaskUpdated: _
     } catch { /* ignore */ }
   };
 
+  // ── Toggle checklist item ─────────────────────────────────────────────────
+  const handleToggleChecklist = async (itemId: string, completed: boolean) => {
+    setChecklist(prev => prev.map(i => i.id === itemId ? { ...i, completed } : i));
+    try {
+      await api.fetch(`/api/tasks/${task.id}/checklist/${itemId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ completed }),
+      });
+    } catch {
+      // revert on error
+      setChecklist(prev => prev.map(i => i.id === itemId ? { ...i, completed: !completed } : i));
+    }
+  };
+
   // ── Submit report ─────────────────────────────────────────────────────────
   const handleSubmitReport = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -228,22 +275,19 @@ export function TaskDetailPanel({ task, orgId: _orgId, onClose, onTaskUpdated: _
           mimeType: 'text/plain', size: reportDesc.length, data: descData, category: 'report',
         }),
       });
-      for (const file of reportFiles) {
-        const data = await toBase64(file);
+      for (const rf of reportFiles) {
+        const data = await toBase64(rf.file);
         await api.fetch(`/api/tasks/${task.id}/attachments`, {
           method: 'POST',
-          body: JSON.stringify({ name: file.name, mimeType: file.type, size: file.size, data, category: 'report' }),
+          body: JSON.stringify({ name: rf.name, mimeType: rf.type, size: rf.file.size, data, category: 'report' }),
         });
       }
 
       // Also create a user-report entry so it appears on the Reports page
       try {
-        const firstImg = reportFiles.find(f => f.type.startsWith('image/'));
-        let imageData: string | undefined;
-        if (firstImg) {
-          const b64 = await toBase64(firstImg);
-          imageData = `data:${firstImg.type};base64,${b64}`;
-        }
+        const attachmentsPayload = reportFiles.length > 0
+          ? JSON.stringify(reportFiles.map(rf => ({ name: rf.name, type: rf.type, dataUrl: rf.dataUrl })))
+          : undefined;
         const userName = session?.user?.name || (session?.user as any)?.email || 'Unknown';
         await api.fetch('/api/user-reports', {
           method: 'POST',
@@ -252,7 +296,7 @@ export function TaskDetailPanel({ task, orgId: _orgId, onClose, onTaskUpdated: _
             description: reportDesc,
             userName,
             projectId: task.projectId || undefined,
-            image: imageData,
+            image: attachmentsPayload,
           }),
         });
       } catch (err) {
@@ -261,7 +305,7 @@ export function TaskDetailPanel({ task, orgId: _orgId, onClose, onTaskUpdated: _
 
       await fetchAttachments();
       setReportSuccess(true);
-      setTimeout(() => { setShowReport(false); setReportSuccess(false); setReportTitle(''); setReportDesc(''); setReportFiles([]); }, 1500);
+      setTimeout(() => { setShowReport(false); setReportSuccess(false); setReportTitle(''); setReportDesc(''); setReportFiles([]); setReportLightbox(null); }, 1500);
     } catch { /* ignore */ }
     finally { setSubmitting(false); }
   };
@@ -303,6 +347,12 @@ export function TaskDetailPanel({ task, orgId: _orgId, onClose, onTaskUpdated: _
                 className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
                 style={{ background: pCfg.bg, color: pCfg.color }}
               >{(task.priority ?? 'Medium').toUpperCase()}</span>
+              {task.parentTaskId && (
+                <span className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-semibold"
+                  style={{ background: `${VS.blue}18`, color: VS.blue }}>
+                  ↳ Sub-task
+                </span>
+              )}
               {isOverdue && (
                 <span className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-semibold"
                   style={{ background: `${VS.red}18`, color: VS.red }}>
@@ -358,7 +408,7 @@ export function TaskDetailPanel({ task, orgId: _orgId, onClose, onTaskUpdated: _
                 {[
                   { icon: Calendar, label: 'Due Date',        value: fmtDate(task.dueDate),    color: isOverdue ? VS.red : VS.text1 },
                   { icon: Folder,   label: 'Project',         value: task.project || '—',       color: VS.text1 },
-                  { icon: Clock,    label: 'Est. Hours',      value: `${task.estimatedHours}h`, color: VS.text1 },
+                  { icon: Clock,    label: 'Est. Time',      value: (() => { const h = Math.floor(task.estimatedHours || 0); const m = Math.round(((task.estimatedHours || 0) % 1) * 60); return h && m ? `${h}h ${m}m` : h ? `${h}h` : m ? `${m}m` : '—'; })(), color: VS.text1 },
                   { icon: Clock,    label: 'Actual Hours',    value: `${task.actualHours}h`,    color: VS.text1 },
                   { icon: User,     label: 'Assignee',        value: task.assignee || '—',       color: VS.text1 },
                 ].map(({ icon: Icon, label, value, color }) => (
@@ -372,15 +422,108 @@ export function TaskDetailPanel({ task, orgId: _orgId, onClose, onTaskUpdated: _
                 ))}
               </div>
 
+              {/* ── Team Task section ── */}
+              {task.isTeamTask && (
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-[11px] font-semibold uppercase tracking-wider flex items-center gap-1.5" style={{ color: VS.text2 }}>
+                      <Users className="h-3.5 w-3.5" />
+                      Team Task
+                    </h3>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-bold" style={{ color: VS.teal }}>
+                        {checklist.filter(i => i.completed).length}/{checklist.length} done
+                      </span>
+                      {checklist.length > 0 && (
+                        <div className="h-1.5 w-24 rounded-full overflow-hidden" style={{ background: VS.bg3 }}>
+                          <div
+                            className="h-full rounded-full transition-all"
+                            style={{
+                              width: `${Math.round(checklist.filter(i => i.completed).length / checklist.length * 100)}%`,
+                              background: VS.teal,
+                            }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Main assignee */}
+                  {task.mainAssigneeId && (() => {
+                    const lead = task.assignees?.find(a => a.id === task.mainAssigneeId)
+                      || (task.assignee ? { id: task.mainAssigneeId, name: task.assignee, email: '' } : null);
+                    return lead ? (
+                      <div className="flex items-center gap-2.5 p-2.5 rounded-lg mb-3" style={{ background: `${VS.accent}11`, border: `1px solid ${VS.accent}33` }}>
+                        <div className="h-7 w-7 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0"
+                          style={{ background: `${VS.accent}33`, color: VS.accent }}>
+                          {getInitials(lead.name, lead.email)}
+                        </div>
+                        <div>
+                          <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: VS.accent }}>Lead</div>
+                          <div className="text-[12px] font-semibold" style={{ color: VS.text0 }}>{lead.name || lead.email}</div>
+                        </div>
+                      </div>
+                    ) : null;
+                  })()}
+
+                  {/* Checklist */}
+                  {checklistLoading ? (
+                    <div className="text-[12px] py-2" style={{ color: VS.text2 }}>Loading checklist…</div>
+                  ) : checklist.length === 0 ? (
+                    <div className="text-[12px] py-2 italic" style={{ color: VS.text2 }}>No checklist items yet</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {checklist.map(item => (
+                        <div
+                          key={item.id}
+                          className="flex items-center gap-3 p-3 rounded-lg transition-all"
+                          style={{
+                            background: item.completed ? 'rgba(78,201,176,0.07)' : VS.bg1,
+                            border: `1px solid ${item.completed ? '#4ec9b033' : VS.border}`,
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => handleToggleChecklist(item.id, !item.completed)}
+                            className="h-5 w-5 rounded flex items-center justify-center shrink-0 transition-all"
+                            style={{
+                              background: item.completed ? VS.teal : 'transparent',
+                              border: `2px solid ${item.completed ? VS.teal : '#555'}`,
+                            }}
+                          >
+                            {item.completed && <Check className="h-3 w-3 text-white" />}
+                          </button>
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            <div className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
+                              style={{ background: `${VS.blue}22`, color: VS.blue }}>
+                              {getInitials(item.assigneeName, item.assigneeEmail)}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[11px] font-semibold truncate" style={{ color: item.completed ? VS.text2 : VS.text0, textDecoration: item.completed ? 'line-through' : 'none' }}>
+                                {item.title}
+                              </div>
+                              <div className="text-[10px]" style={{ color: VS.text2 }}>{item.assigneeName || item.assigneeEmail}</div>
+                            </div>
+                          </div>
+                          {item.completed && (
+                            <span className="text-[10px] shrink-0 font-semibold" style={{ color: VS.teal }}>✓ Done</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Description */}
-              {task.description && (
+              {(task.description || task.parentTaskId) && (
                 <div>
                   <h3 className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: VS.text2 }}>Description</h3>
                   <div
                     className="p-4 rounded-lg text-[13px] leading-relaxed whitespace-pre-wrap"
-                    style={{ background: VS.bg1, border: `1px solid ${VS.border}`, color: VS.text1 }}
+                    style={{ background: VS.bg1, border: `1px solid ${VS.border}`, color: task.description ? VS.text1 : VS.text2 }}
                   >
-                    {task.description}
+                    {task.description || 'No description provided for this sub-task.'}
                   </div>
                 </div>
               )}
@@ -685,7 +828,19 @@ export function TaskDetailPanel({ task, orgId: _orgId, onClose, onTaskUpdated: _
                 <p className="text-[15px] font-semibold" style={{ color: VS.teal }}>Report submitted!</p>
               </div>
             ) : (
-              <form onSubmit={handleSubmitReport} className="p-5 space-y-4">
+              <form onSubmit={handleSubmitReport} className="p-5 space-y-4"
+                onDragOver={e => { e.preventDefault(); setReportDragOver(true); }}
+                onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setReportDragOver(false); }}
+                onDrop={e => {
+                  e.preventDefault(); setReportDragOver(false);
+                  Array.from(e.dataTransfer.files).forEach(f => {
+                    const reader = new FileReader();
+                    reader.onload = ev => setReportFiles(prev => [...prev, { name: f.name, type: f.type, dataUrl: ev.target?.result as string, file: f }]);
+                    reader.readAsDataURL(f);
+                  });
+                }}
+                style={{ outline: reportDragOver ? `2px dashed ${VS.accent}` : 'none', outlineOffset: -4 }}
+              >
                 <p className="text-[12px]" style={{ color: VS.text2 }}>
                   Summarise what you accomplished on this task. Attach screenshots, documents, or any supporting files.
                 </p>
@@ -717,34 +872,62 @@ export function TaskDetailPanel({ task, orgId: _orgId, onClose, onTaskUpdated: _
 
                 <div>
                   <label className="block text-[12px] font-semibold mb-1.5" style={{ color: VS.text2 }}>Attachments (optional)</label>
-                  <div
-                    className="rounded-lg p-4 text-center cursor-pointer transition-colors hover:bg-white/[0.03]"
-                    style={{ border: `2px dashed ${VS.border2}` }}
-                    onClick={() => reportFileRef.current?.click()}
-                  >
-                    <Upload className="h-6 w-6 mx-auto mb-1.5" style={{ color: VS.text2 }} />
-                    <p className="text-[12px]" style={{ color: VS.text2 }}>
-                      Click to add files, or drag and drop
-                    </p>
-                    {reportFiles.length > 0 && (
-                      <div className="mt-2 space-y-1">
-                        {reportFiles.map((f, i) => (
-                          <div key={i} className="flex items-center justify-between px-2 py-1 rounded text-[11px]"
-                            style={{ background: VS.bg2, color: VS.text1 }}>
-                            <span>{f.name}</span>
-                            <span style={{ color: VS.text2 }}>{fmtSize(f.size)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
                   <input
                     ref={reportFileRef}
                     type="file"
                     multiple
+                    accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.csv,.txt"
                     className="hidden"
-                    onChange={e => setReportFiles(Array.from(e.target.files ?? []))}
+                    onChange={e => {
+                      const files = Array.from(e.target.files ?? []);
+                      files.forEach(f => {
+                        const reader = new FileReader();
+                        reader.onload = ev => {
+                          setReportFiles(prev => [...prev, { name: f.name, type: f.type, dataUrl: ev.target?.result as string, file: f }]);
+                        };
+                        reader.readAsDataURL(f);
+                      });
+                      if (reportFileRef.current) reportFileRef.current.value = '';
+                    }}
                   />
+                  <button type="button" onClick={() => reportFileRef.current?.click()}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] hover:opacity-80"
+                    style={{ background: VS.bg3, border: `1px solid ${VS.border}`, color: VS.text1 }}>
+                    <Paperclip className="h-3.5 w-3.5" /> Attach Files
+                  </button>
+
+                  {/* Thumbnail grid */}
+                  {reportFiles.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      {reportFiles.map((rf, i) => {
+                        const isImg = rf.type.startsWith('image/');
+                        return (
+                          <div key={i} style={{ position: 'relative', width: 72, height: 72 }}>
+                            <div
+                              onClick={() => isImg && setReportLightbox(i)}
+                              style={{ width: 72, height: 72, borderRadius: 8, border: `1px solid ${VS.border}`, background: VS.bg2, overflow: 'hidden', cursor: isImg ? 'zoom-in' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                            >
+                              {isImg
+                                ? <img src={rf.dataUrl} alt={rf.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                : (
+                                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: 6 }}>
+                                    <File className="h-5 w-5" style={{ color: VS.accent }} />
+                                    <span style={{ fontSize: 9, color: VS.text2, textAlign: 'center', wordBreak: 'break-all', lineHeight: 1.2 }}>
+                                      {rf.name.length > 10 ? rf.name.slice(0, 9) + '…' : rf.name}
+                                    </span>
+                                  </div>
+                                )
+                              }
+                            </div>
+                            <button type="button" onClick={() => setReportFiles(prev => prev.filter((_, idx) => idx !== i))}
+                              style={{ position: 'absolute', top: -6, right: -6, background: VS.red, border: 'none', borderRadius: '50%', width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', cursor: 'pointer', padding: 0 }}>
+                              <X className="h-2.5 w-2.5" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex justify-end gap-3 pt-1">
@@ -765,6 +948,36 @@ export function TaskDetailPanel({ task, orgId: _orgId, onClose, onTaskUpdated: _
           </div>
         </div>
       )}
+
+      {/* Lightbox — rendered at body level via portal to escape modal stacking context */}
+      {reportLightbox !== null && createPortal((() => {
+        const imgIndexes = reportFiles.map((rf, i) => rf.type.startsWith('image/') ? i : -1).filter(i => i >= 0);
+        const pos = imgIndexes.indexOf(reportLightbox);
+        return (
+          <div onClick={() => setReportLightbox(null)}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.88)', zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <img src={reportFiles[reportLightbox].dataUrl} alt={reportFiles[reportLightbox].name}
+              style={{ maxWidth: '90vw', maxHeight: '85vh', objectFit: 'contain', borderRadius: 8 }}
+              onClick={e => e.stopPropagation()} />
+            {pos > 0 && (
+              <button onClick={e => { e.stopPropagation(); setReportLightbox(imgIndexes[pos - 1]); }}
+                style={{ position: 'fixed', left: 16, top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.5)', border: 'none', borderRadius: '50%', width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', cursor: 'pointer' }}>
+                <ChevronLeft className="h-5 w-5" />
+              </button>
+            )}
+            {pos < imgIndexes.length - 1 && (
+              <button onClick={e => { e.stopPropagation(); setReportLightbox(imgIndexes[pos + 1]); }}
+                style={{ position: 'fixed', right: 16, top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.5)', border: 'none', borderRadius: '50%', width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', cursor: 'pointer' }}>
+                <ChevronRight className="h-5 w-5" />
+              </button>
+            )}
+            <button onClick={() => setReportLightbox(null)}
+              style={{ position: 'fixed', top: 16, right: 16, background: 'rgba(0,0,0,0.5)', border: 'none', borderRadius: '50%', width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', cursor: 'pointer' }}>
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        );
+      })(), document.body)}
     </>
   );
 }

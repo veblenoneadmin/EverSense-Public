@@ -519,4 +519,51 @@ router.post('/switch-org', async (req, res) => {
   }
 });
 
+// ── POST /api/auth/avatar — save base64 avatar image ────────────────────────
+let avatarColumnReady = false;
+router.post('/avatar', async (req, res) => {
+  if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+
+  const { dataUrl } = req.body;
+  if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
+    return res.status(400).json({ error: 'Invalid image data' });
+  }
+  // Sanity-check size (~200KB max after base64)
+  if (dataUrl.length > 280000) {
+    return res.status(400).json({ error: 'Image too large (max ~200KB). Please resize before uploading.' });
+  }
+
+  // Ensure the image column can hold base64 (widen to TEXT once)
+  if (!avatarColumnReady) {
+    try {
+      await prisma.$executeRawUnsafe('ALTER TABLE `User` MODIFY `image` TEXT NULL');
+    } catch { /* already TEXT or unsupported — ignore */ }
+    avatarColumnReady = true;
+  }
+
+  try {
+    await prisma.$executeRawUnsafe(
+      'UPDATE `User` SET image = ?, updatedAt = NOW() WHERE id = ?',
+      dataUrl, req.user.id
+    );
+    res.json({ success: true, image: dataUrl });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── DELETE /api/auth/avatar — remove avatar ───────────────────────────────────
+router.delete('/avatar', async (req, res) => {
+  if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+  try {
+    await prisma.$executeRawUnsafe(
+      'UPDATE `User` SET image = NULL, updatedAt = NOW() WHERE id = ?',
+      req.user.id
+    );
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;

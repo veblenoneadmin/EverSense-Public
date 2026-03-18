@@ -45,6 +45,48 @@ async function ensureAssigneesTable() {
   } catch (_) { assigneesTableReady = true; }
 }
 
+// ── Lazy task_checklist_items table + team task columns ────────────────────────
+let teamTaskSchemaReady = false;
+async function ensureTeamTaskSchema() {
+  if (teamTaskSchemaReady) return;
+  try {
+    await prisma.$executeRawUnsafe(
+      'CREATE TABLE IF NOT EXISTS `task_checklist_items` (' +
+      '  `id` VARCHAR(191) NOT NULL, `taskId` VARCHAR(50) NOT NULL,' +
+      '  `assigneeId` VARCHAR(36) NOT NULL, `orgId` VARCHAR(191) NOT NULL,' +
+      '  `title` VARCHAR(500) NOT NULL DEFAULT \'My part\',' +
+      '  `completed` TINYINT(1) NOT NULL DEFAULT 0,' +
+      '  `completedAt` DATETIME(3) NULL, `completedBy` VARCHAR(36) NULL,' +
+      '  `sortOrder` INT NOT NULL DEFAULT 0,' +
+      '  `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),' +
+      '  PRIMARY KEY (`id`),' +
+      '  KEY `tci_taskId_idx` (`taskId`),' +
+      '  KEY `tci_assigneeId_idx` (`assigneeId`),' +
+      '  KEY `tci_orgId_idx` (`orgId`)' +
+      ') DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
+    );
+  } catch (_) {}
+  // Add isTeamTask column to macro_tasks if not exists
+  try {
+    await prisma.$executeRawUnsafe(
+      'ALTER TABLE macro_tasks ADD COLUMN `isTeamTask` TINYINT(1) NOT NULL DEFAULT 0'
+    );
+  } catch (_) {}
+  // Add mainAssigneeId column to macro_tasks if not exists
+  try {
+    await prisma.$executeRawUnsafe(
+      'ALTER TABLE macro_tasks ADD COLUMN `mainAssigneeId` VARCHAR(36) NULL'
+    );
+  } catch (_) {}
+  // Add parentTaskId column to macro_tasks if not exists
+  try {
+    await prisma.$executeRawUnsafe(
+      'ALTER TABLE macro_tasks ADD COLUMN `parentTaskId` VARCHAR(50) NULL'
+    );
+  } catch (_) {}
+  teamTaskSchemaReady = true;
+}
+
 // ── Replace all assignees for a task ─────────────────────────────────────────
 async function setTaskAssignees(taskId, orgId, assigneeIds) {
   if (!Array.isArray(assigneeIds)) return;
@@ -88,7 +130,7 @@ router.get('/active-timers', requireAuth, withOrgScope, async (req, res) => {
   try {
     const timers = await prisma.$queryRawUnsafe(
       'SELECT at.userId, at.taskId, UNIX_TIMESTAMP(at.startedAt)*1000 AS startedAt, u.name ' +
-      'FROM active_timers at JOIN `user` u ON u.id = at.userId WHERE at.orgId = ?',
+      'FROM active_timers at JOIN `User` u ON u.id = at.userId WHERE at.orgId = ?',
       req.orgId
     );
     res.json({ timers: timers.map(t => ({ ...t, startedAt: Number(t.startedAt) })) });
@@ -216,6 +258,21 @@ router.get('/', requireAuth, withOrgScope, validateQuery(commonSchemas.paginatio
       }
     }
 
+    // Exclude completed tasks older than 7 days (expired)
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    where.NOT = {
+      AND: [
+        { status: 'completed' },
+        {
+          OR: [
+            { completedAt: { lt: sevenDaysAgo } },
+            // tasks with no completedAt (completed before column existed) — fall back to updatedAt
+            { AND: [{ completedAt: null }, { updatedAt: { lt: sevenDaysAgo } }] }
+          ]
+        }
+      ]
+    };
+
     const tasks = await prisma.macroTask.findMany({
       where,
       orderBy: [
@@ -253,11 +310,35 @@ router.get('/', requireAuth, withOrgScope, validateQuery(commonSchemas.paginatio
       updatedAt: task.updatedAt,
       userId: task.userId,
       assignees: [],
+      isTeamTask: !!(task.isTeamTask),
+      mainAssigneeId: task.mainAssigneeId || null,
+      parentTaskId: task.parentTaskId || null,
+      checklistTotal: 0,
+      checklistDone: 0,
     }));
 
     if (formattedTasks.length > 0) {
       const taskIds = formattedTasks.map(t => t.id);
       const ph = taskIds.map(() => '?').join(',');
+
+      // Fetch extra columns added via raw ALTER TABLE (not in Prisma schema)
+      try {
+        await ensureTeamTaskSchema();
+        const extraRows = await prisma.$queryRawUnsafe(
+          `SELECT id, isTeamTask, mainAssigneeId, parentTaskId FROM macro_tasks WHERE id IN (${ph})`,
+          ...taskIds
+        );
+        const extraMap = {};
+        for (const r of extraRows) extraMap[r.id] = r;
+        for (const t of formattedTasks) {
+          const ex = extraMap[t.id];
+          if (ex) {
+            t.isTeamTask = !!(ex.isTeamTask);
+            t.mainAssigneeId = ex.mainAssigneeId || null;
+            t.parentTaskId = ex.parentTaskId || null;
+          }
+        }
+      } catch (_) {}
 
       // Enrich primary assignee names via raw SQL (avoids collation JOIN issues)
       try {
@@ -297,15 +378,48 @@ router.get('/', requireAuth, withOrgScope, validateQuery(commonSchemas.paginatio
       try {
         await ensureAssigneesTable();
         const rows = await prisma.$queryRawUnsafe(
-          `SELECT ta.taskId, ta.userId, u.name, u.email FROM task_assignees ta JOIN User u ON u.id = ta.userId WHERE ta.taskId IN (${ph})`,
+          `SELECT ta.taskId, ta.userId, u.name, u.email, u.image FROM task_assignees ta JOIN User u ON u.id = ta.userId WHERE ta.taskId IN (${ph})`,
           ...taskIds
         );
         const aMap = {};
         for (const r of rows) {
           if (!aMap[r.taskId]) aMap[r.taskId] = [];
-          aMap[r.taskId].push({ id: r.userId, name: r.name, email: r.email });
+          aMap[r.taskId].push({ id: r.userId, name: r.name, email: r.email, image: r.image || null });
         }
         for (const t of formattedTasks) t.assignees = aMap[t.id] || [];
+      } catch (_) {}
+
+      // Batch-fetch sub-task progress + assignees for team tasks
+      try {
+        await ensureTeamTaskSchema();
+        const teamTaskIds = formattedTasks.filter(t => t.isTeamTask).map(t => t.id);
+        if (teamTaskIds.length > 0) {
+          const tph = teamTaskIds.map(() => '?').join(',');
+          // Progress counts
+          const subTaskRows = await prisma.$queryRawUnsafe(
+            `SELECT parentTaskId, COUNT(*) as total, SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) as done FROM macro_tasks WHERE parentTaskId IN (${tph}) GROUP BY parentTaskId`,
+            ...teamTaskIds
+          );
+          for (const r of subTaskRows) {
+            const t = formattedTasks.find(x => x.id === r.parentTaskId);
+            if (t) { t.checklistTotal = Number(r.total); t.checklistDone = Number(r.done); }
+          }
+          // Sub-task assignees — replace the parent's assignees list with team members
+          const subAssigneeRows = await prisma.$queryRawUnsafe(
+            `SELECT mt.parentTaskId, mt.userId, u.name, u.email, u.image FROM macro_tasks mt JOIN \`User\` u ON u.id = mt.userId WHERE mt.parentTaskId IN (${tph})`,
+            ...teamTaskIds
+          );
+          const subAMap = {};
+          for (const r of subAssigneeRows) {
+            if (!subAMap[r.parentTaskId]) subAMap[r.parentTaskId] = [];
+            if (!subAMap[r.parentTaskId].some(x => x.id === r.userId)) {
+              subAMap[r.parentTaskId].push({ id: r.userId, name: r.name, email: r.email, image: r.image || null });
+            }
+          }
+          for (const t of formattedTasks) {
+            if (t.isTeamTask && subAMap[t.id]) t.assignees = subAMap[t.id];
+          }
+        }
       } catch (_) {}
     }
 
@@ -606,6 +720,61 @@ router.post('/', requireAuthOrApiKey, withOrgScope, validateBody(taskSchemas.cre
       : (userId ? [userId] : []);
     await setTaskAssignees(task.id, orgId, assigneeIds);
 
+    // Create sub-tasks as real MacroTask records (appear on each member's board)
+    const { isTeamTask, mainAssigneeId, subTasks } = req.body;
+    if (isTeamTask && Array.isArray(subTasks) && subTasks.length > 0) {
+      await ensureTeamTaskSchema();
+      await prisma.$executeRawUnsafe(
+        'UPDATE macro_tasks SET isTeamTask = 1, mainAssigneeId = ? WHERE id = ?',
+        mainAssigneeId || null, task.id
+      );
+      const creator = await prisma.user.findUnique({ where: { id: req.user.id }, select: { name: true } }).catch(() => null);
+      for (const sub of subTasks) {
+        if (!sub.title || !sub.assigneeId) continue;
+        // Create real sub-task
+        const subTask = await prisma.macroTask.create({
+          data: {
+            title: sub.title,
+            description: sub.description || null,
+            userId: sub.assigneeId,
+            orgId,
+            createdBy: req.user.id,
+            priority,
+            status: 'not_started',
+            estimatedHours: 0,
+            category: taskCategory,
+            projectId: projectId || null,
+            dueDate: dueDate ? new Date(dueDate) : null,
+            tags: null,
+          },
+        });
+        // Set parentTaskId via raw SQL
+        await prisma.$executeRawUnsafe(
+          'UPDATE macro_tasks SET parentTaskId = ? WHERE id = ?',
+          task.id, subTask.id
+        );
+        // Add assignee record
+        await setTaskAssignees(subTask.id, orgId, [sub.assigneeId]);
+        // Notify assignee
+        if (sub.assigneeId !== req.user.id) {
+          createNotification({
+            userId: sub.assigneeId,
+            orgId,
+            title: `New Sub-task: ${sub.title}`,
+            body: `Assigned to you by ${creator?.name || 'a team member'} as part of "${title}".`,
+            type: 'task',
+            link: '/tasks',
+          });
+        }
+      }
+    } else if (isTeamTask) {
+      await ensureTeamTaskSchema();
+      await prisma.$executeRawUnsafe(
+        'UPDATE macro_tasks SET isTeamTask = 1, mainAssigneeId = ? WHERE id = ?',
+        mainAssigneeId || null, task.id
+      );
+    }
+
     // Notify all assignees (excluding the creator)
     if (assigneeIds.length > 0) {
       const creator = await prisma.user.findUnique({ where: { id: req.user.id }, select: { name: true } });
@@ -617,6 +786,7 @@ router.post('/', requireAuthOrApiKey, withOrgScope, validateBody(taskSchemas.cre
             title: `New Task Assigned: ${title}`,
             body: `Assigned to you by ${creator?.name || 'a team member'}${task.project ? ` in "${task.project.name}"` : ''}.`,
             type: 'task',
+            link: '/tasks',
           });
         }
       }
@@ -652,6 +822,9 @@ router.put('/:taskId', requireAuth, withOrgScope, requireTaskOwnership, async (r
     delete updates.updatedAt;
     delete updates.createdBy;
     delete updates.assigneeIds;
+    delete updates.isTeamTask;
+    delete updates.mainAssigneeId;
+    delete updates.checklistItems;
 
     // Handle date fields
     if (updates.dueDate !== undefined) {
@@ -717,6 +890,27 @@ router.put('/:taskId', requireAuth, withOrgScope, requireTaskOwnership, async (r
       await setTaskAssignees(taskId, req.orgId, newAssigneeIds);
     }
 
+    // Handle team task fields
+    const { isTeamTask: putIsTeamTask, mainAssigneeId: putMainAssigneeId, checklistItems: putChecklistItems } = req.body;
+    if (putIsTeamTask !== undefined) {
+      await ensureTeamTaskSchema();
+      await prisma.$executeRawUnsafe(
+        'UPDATE macro_tasks SET isTeamTask = ?, mainAssigneeId = ? WHERE id = ?',
+        putIsTeamTask ? 1 : 0, putMainAssigneeId || null, taskId
+      );
+      if (Array.isArray(putChecklistItems)) {
+        await prisma.$executeRawUnsafe('DELETE FROM task_checklist_items WHERE taskId = ?', taskId);
+        for (let i = 0; i < putChecklistItems.length; i++) {
+          const item = putChecklistItems[i];
+          if (!item.assigneeId || !item.title) continue;
+          await prisma.$executeRawUnsafe(
+            'INSERT INTO task_checklist_items (id, taskId, assigneeId, orgId, title, sortOrder) VALUES (?, ?, ?, ?, ?, ?)',
+            randomUUID(), taskId, item.assigneeId, req.orgId, item.title, i
+          );
+        }
+      }
+    }
+
     console.log(`📝 Updated task ${taskId}`);
 
     // Notify new assignees if task was reassigned
@@ -731,6 +925,7 @@ router.put('/:taskId', requireAuth, withOrgScope, requireTaskOwnership, async (r
             title: `Task Assigned to You: ${task.title}`,
             body: `Assigned by ${updater?.name || 'a team member'}${task.project ? ` (${task.project.name})` : ''}.`,
             type: 'task',
+            link: '/tasks',
           });
         }
       }
@@ -766,6 +961,9 @@ router.patch('/:taskId', requireAuth, withOrgScope, requireTaskOwnership, async 
     delete updates.updatedAt;
     delete updates.createdBy;
     delete updates.assigneeIds;
+    delete updates.isTeamTask;
+    delete updates.mainAssigneeId;
+    delete updates.checklistItems;
 
     // Handle date fields
     if (updates.dueDate !== undefined) {
@@ -831,6 +1029,27 @@ router.patch('/:taskId', requireAuth, withOrgScope, requireTaskOwnership, async 
       await setTaskAssignees(taskId, req.orgId, newAssigneeIdsPatch);
     }
 
+    // Handle team task fields
+    const { isTeamTask: putIsTeamTask, mainAssigneeId: putMainAssigneeId, checklistItems: putChecklistItems } = req.body;
+    if (putIsTeamTask !== undefined) {
+      await ensureTeamTaskSchema();
+      await prisma.$executeRawUnsafe(
+        'UPDATE macro_tasks SET isTeamTask = ?, mainAssigneeId = ? WHERE id = ?',
+        putIsTeamTask ? 1 : 0, putMainAssigneeId || null, taskId
+      );
+      if (Array.isArray(putChecklistItems)) {
+        await prisma.$executeRawUnsafe('DELETE FROM task_checklist_items WHERE taskId = ?', taskId);
+        for (let i = 0; i < putChecklistItems.length; i++) {
+          const item = putChecklistItems[i];
+          if (!item.assigneeId || !item.title) continue;
+          await prisma.$executeRawUnsafe(
+            'INSERT INTO task_checklist_items (id, taskId, assigneeId, orgId, title, sortOrder) VALUES (?, ?, ?, ?, ?, ?)',
+            randomUUID(), taskId, item.assigneeId, req.orgId, item.title, i
+          );
+        }
+      }
+    }
+
     console.log(`📝 PATCH Updated task ${taskId}`);
 
     // Notify new assignees if reassigned
@@ -845,6 +1064,7 @@ router.patch('/:taskId', requireAuth, withOrgScope, requireTaskOwnership, async 
             title: `Task Assigned to You: ${task.title}`,
             body: `Assigned by ${updater?.name || 'a team member'}${task.project ? ` (${task.project.name})` : ''}.`,
             type: 'task',
+            link: '/tasks',
           });
         }
       }
@@ -896,12 +1116,13 @@ router.patch('/:taskId/status', requireAuth, withOrgScope, requireTaskOwnership,
         title: `Task Status Updated: ${task.title}`,
         body: `Status changed to "${status}" by ${updater?.name || 'a team member'}.`,
         type: 'task',
+        link: '/tasks',
       });
     }
     // If completed, also notify all org admins/owners (excluding the completer and assignee)
     if (status === 'completed') {
       prisma.membership.findMany({
-        where: { orgId: req.orgId, role: { in: ['OWNER', 'ADMIN'] } },
+        where: { orgId: req.orgId, role: { in: ['OWNER', 'ADMIN', 'HALL_OF_JUSTICE'] } },
         select: { userId: true },
       }).then(admins => {
         for (const { userId: adminId } of admins) {
@@ -912,6 +1133,7 @@ router.patch('/:taskId/status', requireAuth, withOrgScope, requireTaskOwnership,
               title: `Task Completed: ${task.title}`,
               body: `"${task.title}" has been marked as completed.`,
               type: 'task',
+              link: '/tasks',
             });
           }
         }
@@ -1148,6 +1370,7 @@ router.post('/:taskId/comments', requireAuth, withOrgScope, async (req, res) => 
             title: `New Comment on: ${taskInfo.title}`,
             body: `${commenterName}: "${preview}"`,
             type: 'comment',
+            link: '/tasks',
           });
         }
       }
@@ -1226,6 +1449,54 @@ router.delete('/:taskId/attachments/:attachId', requireAuth, withOrgScope, async
     await prisma.taskAttachment.delete({ where: { id: req.params.attachId } });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Failed to delete attachment' }); }
+});
+
+// ── GET /api/tasks/:taskId/checklist — fetch sub-tasks ───────────────────────
+router.get('/:taskId/checklist', requireAuth, withOrgScope, async (req, res) => {
+  const { taskId } = req.params;
+  await ensureTeamTaskSchema();
+  try {
+    const subTasks = await prisma.$queryRawUnsafe(
+      'SELECT mt.id, mt.title, mt.status, mt.userId as assigneeId, mt.updatedAt, ' +
+      'u.name as assigneeName, u.email as assigneeEmail ' +
+      'FROM macro_tasks mt LEFT JOIN `User` u ON u.id = mt.userId ' +
+      'WHERE mt.parentTaskId = ? AND mt.orgId = ? ORDER BY mt.createdAt ASC',
+      taskId, req.orgId
+    );
+    res.json({
+      items: subTasks.map(s => ({
+        id: s.id,
+        title: s.title,
+        status: s.status,
+        completed: s.status === 'completed',
+        assigneeId: s.assigneeId,
+        assigneeName: s.assigneeName,
+        assigneeEmail: s.assigneeEmail,
+      }))
+    });
+  } catch (e) {
+    console.error('[Checklist] fetch error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch checklist' });
+  }
+});
+
+// ── PATCH /api/tasks/:taskId/checklist/:itemId — toggle sub-task done ─────────
+router.patch('/:taskId/checklist/:itemId', requireAuth, withOrgScope, async (req, res) => {
+  const { itemId } = req.params;
+  const { completed } = req.body;
+  try {
+    await prisma.macroTask.update({
+      where: { id: itemId },
+      data: {
+        status: completed ? 'completed' : 'not_started',
+        completedAt: completed ? new Date() : null,
+      },
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[Checklist] toggle error:', e.message);
+    res.status(500).json({ error: 'Failed to update sub-task' });
+  }
 });
 
 export default router;

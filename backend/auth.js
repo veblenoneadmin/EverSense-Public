@@ -16,8 +16,7 @@ export const auth = betterAuth({
     expiresIn: 60 * 60 * 24 * 7, // 7 days
     updateAge: 60 * 60 * 24,      // refresh if older than 1 day
     cookieCache: {
-      enabled: true,
-      maxAge: 5 * 60
+      enabled: false,
     }
   },
 
@@ -27,13 +26,6 @@ export const auth = betterAuth({
           google: {
             clientId:     process.env.GOOGLE_CLIENT_ID,
             clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-            scopes: [
-              'openid', 'email', 'profile',
-              'https://www.googleapis.com/auth/calendar',
-              'https://www.googleapis.com/auth/calendar.events',
-            ],
-            accessType: 'offline',
-            prompt: 'consent',
           },
         }
       : {}),

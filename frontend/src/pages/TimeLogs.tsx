@@ -5,12 +5,12 @@ import { useSSE } from '../hooks/useSSE';
 import { pauseTaskTimer, resumeTaskTimer, stopTaskTimer } from '../lib/task-timer';
 import {
   Clock, Calendar, Download, Search, LogIn, LogOut,
-  Coffee, Zap, BarChart3, Users, AlertTriangle, Filter, X,
+  Coffee, Zap, BarChart3, Users, AlertTriangle, Filter, X, Pencil,
 } from 'lucide-react';
 
 import { VS } from '../lib/theme';
 
-const BREAK_LIMIT = 1800; // 30 minutes in seconds
+const DEFAULT_breakLimitSecs = 1800; // 30 minutes fallback
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
 interface LeaveRecord {
@@ -104,11 +104,12 @@ function StatCard({
 
 // ── MemberAvatar ──────────────────────────────────────────────────────────────
 function MemberAvatar({ name, image, size = 26 }: { name: string; image?: string | null; size?: number }) {
+  const [imgError, setImgError] = useState(false);
   const initials = name?.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() || '?';
   const colors   = [VS.blue, VS.purple, VS.teal, VS.yellow, VS.orange, VS.accent];
   const color    = colors[(name?.charCodeAt(0) ?? 0) % colors.length];
-  return image
-    ? <img src={image} alt={name}
+  return image && !imgError
+    ? <img src={image} alt={name} onError={() => setImgError(true)}
         style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
     : <div style={{
         width: size, height: size, borderRadius: '50%', background: `${color}28`,
@@ -131,6 +132,14 @@ export function TimeLogs() {
   const [userRole, setUserRole]     = useState('STAFF');
   const [isClient, setIsClient]     = useState(false);
   const [leaves, setLeaves]         = useState<LeaveRecord[]>([]);
+  const [breakLimitSecs, setBreakLimitSecs] = useState(DEFAULT_breakLimitSecs);
+  const [breakCountPerDay, setBreakCountPerDay] = useState(1);
+
+  // Edit break modal
+  const [editBreakLog, setEditBreakLog] = useState<AttendanceLog | null>(null);
+  const [editBreakH, setEditBreakH]     = useState(0);
+  const [editBreakM, setEditBreakM]     = useState(0);
+  const [editBreakSaving, setEditBreakSaving] = useState(false);
 
   // Clock state
   const [clockedIn, setClockedIn]   = useState(false);
@@ -142,7 +151,11 @@ export function TimeLogs() {
   const todayStr = () => new Date().toISOString().slice(0, 10);
   const [onBreak, setOnBreak]       = useState(() => !!localStorage.getItem('att_break_start'));
   const [breakAccum, setBreakAccum] = useState(() => Number(localStorage.getItem('att_break_accum') || 0));
-  const [breakUsed, setBreakUsed]   = useState(() => localStorage.getItem('att_break_used') === new Date().toISOString().slice(0, 10));
+  const [breaksTakenToday, setBreaksTakenToday] = useState(() => {
+    const stored = localStorage.getItem('att_break_used') === new Date().toISOString().slice(0, 10)
+      ? parseInt(localStorage.getItem('att_break_count') || '0') : 0;
+    return stored;
+  });
   const [breakElapsed, setBreakElapsed] = useState(0); // live seconds since break started
 
   // Filters
@@ -230,6 +243,12 @@ export function TimeLogs() {
 
   useEffect(() => {
     if (session?.user?.id) { fetchLogs(); fetchStatus(); }
+    if (orgId) {
+      fetch(`/api/attendance/policy?orgId=${orgId}`, { credentials: 'include' })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d) { setBreakLimitSecs(d.breakLimitSecs ?? DEFAULT_breakLimitSecs); setBreakCountPerDay(d.breakCountPerDay ?? 1); } })
+        .catch(() => {});
+    }
   }, [session?.user?.id, orgId, fetchLogs, fetchStatus]);
 
   // SSE — real-time push (replaces 30s polling interval), no loading spinner
@@ -307,12 +326,11 @@ export function TimeLogs() {
 
   const handleBreak = () => {
     if (!clockedIn) return;
-    if (breakUsed && !onBreak) return;
+    if (!onBreak && breaksTakenToday >= breakCountPerDay) return;
     if (!onBreak) {
       localStorage.setItem('att_break_start', String(Date.now()));
       localStorage.setItem('att_break_used', todayStr());
       setOnBreak(true);
-      setBreakUsed(true);
       pauseTaskTimer();
     } else {
       const started = Number(localStorage.getItem('att_break_start') || Date.now());
@@ -321,11 +339,38 @@ export function TimeLogs() {
       localStorage.setItem('att_break_accum', String(newAccum));
       localStorage.removeItem('att_break_start');
       setBreakAccum(newAccum);
+      const newCount = breaksTakenToday + 1;
+      localStorage.setItem('att_break_count', String(newCount));
+      setBreaksTakenToday(newCount);
       setOnBreak(false);
       setBreakElapsed(0);
       resumeTaskTimer();
     }
     window.dispatchEvent(new CustomEvent('attendance-change'));
+  };
+
+  const handleSaveBreak = async () => {
+    if (!editBreakLog || !orgId) return;
+    setEditBreakSaving(true);
+    try {
+      const res = await fetch(`/api/attendance/logs/${editBreakLog.id}/break?orgId=${orgId}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ breakHours: editBreakH, breakMinutes: editBreakM }),
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Failed'); }
+      const { breakDuration, duration } = await res.json();
+      setLogs(prev => prev.map(l => l.id === editBreakLog.id
+        ? { ...l, breakDuration, duration, overBreak: Math.max(0, breakDuration - breakLimitSecs) }
+        : l
+      ));
+      setEditBreakLog(null);
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setEditBreakSaving(false);
+    }
   };
 
   // ── Derived data ───────────────────────────────────────────────────────────
@@ -381,8 +426,8 @@ export function TimeLogs() {
 
   // Live break display inside the clock card
   const liveBreakTotal = breakAccum + (onBreak ? breakElapsed : 0);
-  const isOverBreak    = liveBreakTotal > BREAK_LIMIT;
-  const breakRemaining = Math.max(0, BREAK_LIMIT - liveBreakTotal);
+  const isOverBreak    = liveBreakTotal > breakLimitSecs;
+  const breakRemaining = Math.max(0, breakLimitSecs - liveBreakTotal);
 
   if (loading) {
     return (
@@ -401,6 +446,7 @@ export function TimeLogs() {
   }
 
   return (
+    <>
     <div className="space-y-6">
 
       {/* ── Header ── */}
@@ -485,11 +531,11 @@ export function TimeLogs() {
                 <>
                   <p className="text-[11px]" style={{ color: VS.text2 }}>Break used</p>
                   <p className="text-[13px] font-mono font-semibold tabular-nums"
-                    style={{ color: liveBreakTotal > BREAK_LIMIT ? VS.red : VS.text1 }}>
+                    style={{ color: liveBreakTotal > breakLimitSecs ? VS.red : VS.text1 }}>
                     {fmtDuration(liveBreakTotal)}
-                    {liveBreakTotal > BREAK_LIMIT && (
+                    {liveBreakTotal > breakLimitSecs && (
                       <span className="ml-1 text-[10px]" style={{ color: VS.red }}>
-                        +{fmtDuration(liveBreakTotal - BREAK_LIMIT)} over
+                        +{fmtDuration(liveBreakTotal - breakLimitSecs)} over
                       </span>
                     )}
                   </p>
@@ -503,10 +549,10 @@ export function TimeLogs() {
             <div className="flex flex-col items-end gap-1">
               <button
                 onClick={handleBreak}
-                disabled={clockLoading || (breakUsed && !onBreak)}
+                disabled={clockLoading || (!onBreak && breaksTakenToday >= breakCountPerDay)}
                 title={
-                  breakUsed && !onBreak
-                    ? 'Break already used today (30-min limit)'
+                  !onBreak && breaksTakenToday >= breakCountPerDay
+                    ? `Break limit reached (${breakCountPerDay}/day)`
                     : onBreak
                       ? `Resume work${isOverBreak ? ' · You are over the 30-min limit' : ''}`
                       : 'Take a 30-min break'
@@ -520,11 +566,13 @@ export function TimeLogs() {
                 <Coffee className="h-4 w-4" />
                 {onBreak ? 'Resume' : 'Break'}
               </button>
-              {!onBreak && !breakUsed && (
-                <span className="text-[10px]" style={{ color: VS.text2 }}>30 min limit</span>
+              {!onBreak && breaksTakenToday < breakCountPerDay && (
+                <span className="text-[10px]" style={{ color: VS.text2 }}>
+                  {Math.floor(breakLimitSecs / 60)} min limit · {breaksTakenToday}/{breakCountPerDay} used
+                </span>
               )}
-              {breakUsed && !onBreak && (
-                <span className="text-[10px]" style={{ color: VS.red }}>Break used today</span>
+              {!onBreak && breaksTakenToday >= breakCountPerDay && (
+                <span className="text-[10px]" style={{ color: VS.red }}>Break limit reached today</span>
               )}
               {onBreak && !isOverBreak && (
                 <span className="text-[10px]" style={{ color: VS.text2 }}>
@@ -893,10 +941,27 @@ export function TimeLogs() {
 
                     {/* Break */}
                     <td className="px-4 py-3 tabular-nums">
-                      {log.breakDuration > 0
-                        ? <span style={{ color: VS.yellow }}>{fmtDuration(log.breakDuration)}</span>
-                        : <span style={{ color: VS.text2 }}>—</span>
-                      }
+                      <div className="flex items-center gap-1.5">
+                        {log.breakDuration > 0
+                          ? <span style={{ color: VS.yellow }}>{fmtDuration(log.breakDuration)}</span>
+                          : <span style={{ color: VS.text2 }}>—</span>
+                        }
+                        {isPrivileged && !log.isActive && (
+                          <button
+                            onClick={() => {
+                              const totalSecs = log.breakDuration || 0;
+                              setEditBreakH(Math.floor(totalSecs / 3600));
+                              setEditBreakM(Math.round((totalSecs % 3600) / 60));
+                              setEditBreakLog(log);
+                            }}
+                            className="h-5 w-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/10"
+                            style={{ color: VS.text2 }}
+                            title="Edit break duration"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
                     </td>
 
                     {/* Over Break */}
@@ -975,5 +1040,64 @@ export function TimeLogs() {
       </div>
 
     </div>
+
+    {/* ── Edit Break Modal ───────────────────────────────────────────────── */}
+    {editBreakLog && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)' }}
+        onClick={e => { if (e.target === e.currentTarget) setEditBreakLog(null); }}>
+        <div className="w-full max-w-xs rounded-2xl overflow-hidden"
+          style={{ background: VS.bg0, border: `1px solid ${VS.border}`, boxShadow: '0 24px 60px rgba(0,0,0,0.8)' }}>
+          <div className="flex items-center justify-between px-5 py-4" style={{ background: VS.bg1, borderBottom: `1px solid ${VS.border}` }}>
+            <div className="flex items-center gap-2">
+              <Coffee className="h-4 w-4" style={{ color: VS.yellow }} />
+              <h3 className="text-[14px] font-bold" style={{ color: VS.text0 }}>Edit Break Duration</h3>
+            </div>
+            <button onClick={() => setEditBreakLog(null)} className="h-7 w-7 rounded-lg flex items-center justify-center hover:bg-white/5" style={{ color: VS.text1 }}>
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="p-5 space-y-4">
+            <p className="text-[12px]" style={{ color: VS.text2 }}>
+              Set break time for <span style={{ color: VS.text0, fontWeight: 600 }}>{editBreakLog.memberName}</span> on {new Date(editBreakLog.timeIn).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}.
+            </p>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <label className="block text-[11px] font-semibold mb-1" style={{ color: VS.text2 }}>Hours</label>
+                <div style={{ position: 'relative' }}>
+                  <input type="number" min={0} max={9} value={editBreakH}
+                    onChange={e => setEditBreakH(Math.max(0, Math.min(9, parseInt(e.target.value) || 0)))}
+                    className="w-full px-3 py-2 rounded-lg text-[13px] focus:outline-none focus:ring-1"
+                    style={{ background: VS.bg3, border: `1px solid ${VS.border2}`, color: VS.text0, paddingRight: 28 }} />
+                  <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 11, color: VS.text2, pointerEvents: 'none' }}>h</span>
+                </div>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label className="block text-[11px] font-semibold mb-1" style={{ color: VS.text2 }}>Minutes</label>
+                <div style={{ position: 'relative' }}>
+                  <input type="number" min={0} max={59} value={editBreakM}
+                    onChange={e => setEditBreakM(Math.max(0, Math.min(59, parseInt(e.target.value) || 0)))}
+                    className="w-full px-3 py-2 rounded-lg text-[13px] focus:outline-none focus:ring-1"
+                    style={{ background: VS.bg3, border: `1px solid ${VS.border2}`, color: VS.text0, paddingRight: 28 }} />
+                  <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 11, color: VS.text2, pointerEvents: 'none' }}>m</span>
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={() => setEditBreakLog(null)}
+                className="px-4 py-2 rounded-lg text-[13px] font-medium hover:bg-white/5"
+                style={{ background: VS.bg2, border: `1px solid ${VS.border}`, color: VS.text1 }}>
+                Cancel
+              </button>
+              <button onClick={handleSaveBreak} disabled={editBreakSaving}
+                className="px-4 py-2 rounded-lg text-[13px] font-semibold disabled:opacity-50"
+                style={{ background: VS.yellow, color: '#000' }}>
+                {editBreakSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

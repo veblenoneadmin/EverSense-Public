@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useSession } from '../lib/auth-client';
+import { useOrganization } from '../contexts/OrganizationContext';
 import {
-  Plus, Trash2, Star, Users, Layers, ChevronDown, ChevronUp,
+  Plus, Trash2, Star, Users, Layers, ChevronDown, ChevronUp, // Star kept for tab icon
   Search, X, Check, Sparkles,
 } from 'lucide-react';
 
@@ -12,39 +13,59 @@ interface Skill { id: string; name: string; category: string; _count?: { staffSk
 interface StaffSkill { id: string; skillId: string; name: string; category: string; level: number; yearsExp: number; notes: string | null }
 interface TeamMember { userId: string; name: string; email: string; image: string | null; role: string; skills: StaffSkill[] }
 
-const LEVEL_LABELS: Record<number, string> = { 1: 'Beginner', 2: 'Basic', 3: 'Intermediate', 4: 'Advanced', 5: 'Expert' };
-const LEVEL_COLORS: Record<number, string> = {
-  1: 'rgba(144,144,144,0.15)',
-  2: 'rgba(86,156,214,0.15)',
-  3: 'rgba(220,220,170,0.15)',
-  4: 'rgba(197,134,192,0.15)',
-  5: 'rgba(78,201,176,0.15)',
+const LEVEL_LABELS: Record<number, string> = {
+  1: 'Novice', 2: 'Novice+', 3: 'Beginner', 4: 'Beginner+', 5: 'Intermediate',
+  6: 'Intermediate+', 7: 'Advanced', 8: 'Advanced+', 9: 'Expert', 10: 'Master',
 };
-const LEVEL_TEXT: Record<number, string> = { 1: '#909090', 2: '#569cd6', 3: '#dcdcaa', 4: '#c586c0', 5: '#4ec9b0' };
+function levelColor(level: number): string {
+  if (level <= 2) return '#909090';
+  if (level <= 4) return '#569cd6';
+  if (level <= 6) return '#dcdcaa';
+  if (level <= 8) return '#c586c0';
+  return '#4ec9b0';
+}
+// Keep for badge backgrounds
+const LEVEL_COLORS: Record<number, string> = Object.fromEntries(
+  Array.from({ length: 10 }, (_, i) => [i + 1, `${levelColor(i + 1)}22`])
+) as Record<number, string>;
+const LEVEL_TEXT: Record<number, string> = Object.fromEntries(
+  Array.from({ length: 10 }, (_, i) => [i + 1, levelColor(i + 1)])
+) as Record<number, string>;
 
 const SKILL_CATEGORIES = ['Technical', 'Design', 'Management', 'Communication', 'Sales', 'Operations', 'Finance', 'Other'];
 
-function LevelStars({ level, onChange }: { level: number; onChange?: (l: number) => void }) {
+function LevelPicker({ level, onChange }: { level: number; onChange?: (l: number) => void }) {
   return (
-    <div style={{ display: 'flex', gap: 4 }}>
-      {[1, 2, 3, 4, 5].map(i => (
-        <button key={i} onClick={() => onChange?.(i)} type="button"
-          style={{ background: 'none', border: 'none', cursor: onChange ? 'pointer' : 'default', padding: 0, lineHeight: 1, transition: 'transform 0.1s' }}
-          onMouseEnter={e => onChange && ((e.currentTarget as HTMLElement).style.transform = 'scale(1.2)')}
-          onMouseLeave={e => ((e.currentTarget as HTMLElement).style.transform = 'scale(1)')}>
-          <Star style={{ width: 16, height: 16 }} fill={i <= level ? LEVEL_TEXT[level] : 'none'} stroke={i <= level ? LEVEL_TEXT[level] : '#555'} />
-        </button>
-      ))}
+    <div style={{ display: 'flex', gap: 3 }}>
+      {Array.from({ length: 10 }, (_, i) => i + 1).map(i => {
+        const active = i <= level;
+        const color = levelColor(level);
+        return (
+          <button key={i} onClick={() => onChange?.(i)} type="button"
+            title={`${i} — ${LEVEL_LABELS[i]}`}
+            style={{
+              width: 22, height: 22, border: active ? `1px solid ${color}` : `1px solid #444`,
+              borderRadius: 4, background: active ? `${color}33` : 'transparent',
+              cursor: onChange ? 'pointer' : 'default', fontSize: 11, fontWeight: 600,
+              color: active ? color : '#555', transition: 'all 0.1s',
+            }}
+            onMouseEnter={e => onChange && ((e.currentTarget as HTMLElement).style.transform = 'scale(1.15)')}
+            onMouseLeave={e => ((e.currentTarget as HTMLElement).style.transform = 'scale(1)')}>
+            {i}
+          </button>
+        );
+      })}
     </div>
   );
 }
 
 function MemberAvatar({ name, image, size = 32 }: { name: string; image?: string | null; size?: number }) {
+  const [imgError, setImgError] = useState(false);
   const initials = name?.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() || '?';
   const colors = ['#569cd6', '#c586c0', '#4ec9b0', '#dcdcaa', '#ce9178'];
   const color = colors[(name?.charCodeAt(0) ?? 0) % colors.length];
-  return image
-    ? <img src={image} alt={name} style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+  return image && !imgError
+    ? <img src={image} alt={name} onError={() => setImgError(true)} style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
     : <div style={{ width: size, height: size, borderRadius: '50%', background: color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.35, fontWeight: 700, color: '#fff', flexShrink: 0 }}>{initials}</div>;
 }
 
@@ -62,10 +83,11 @@ const labelStyle: React.CSSProperties = {
 // ─── Main Component ───────────────────────────────────────────────────────────
 export function Skills() {
   const { data: session } = useSession();
+  const { currentOrg } = useOrganization();
 
   const [tab, setTab] = useState<'my' | 'team' | 'library'>('my');
-  const [userRole, setUserRole] = useState('STAFF');
-  const [orgId, setOrgId] = useState('');
+  const userRole = currentOrg?.role ?? 'STAFF';
+  const orgId = currentOrg?.id ?? '';
 
   // My skills
   const [mySkills, setMySkills] = useState<StaffSkill[]>([]);
@@ -76,7 +98,7 @@ export function Skills() {
   // Add skill form
   const [showAddSkill, setShowAddSkill] = useState(false);
   const [selectedSkillId, setSelectedSkillId] = useState('');
-  const [selectedLevel, setSelectedLevel] = useState(3);
+  const [selectedLevel, setSelectedLevel] = useState(5);
   const [selectedYears, setSelectedYears] = useState('');
   const [skillNotes, setSkillNotes] = useState('');
   const [saving, setSaving] = useState(false);
@@ -93,6 +115,14 @@ export function Skills() {
   // Team expand
   const [expandedMember, setExpandedMember] = useState<string | null>(null);
 
+  // Assign skill to team member (admin)
+  const [assignTarget, setAssignTarget] = useState<{ userId: string; name: string } | null>(null);
+  const [assignSkillId, setAssignSkillId] = useState('');
+  const [assignLevel, setAssignLevel] = useState(5);
+  const [assignSearch, setAssignSearch] = useState('');
+  const [assignSaving, setAssignSaving] = useState(false);
+  const [assignError, setAssignError] = useState('');
+
   // AI generate skills
   const [showAiGenerate, setShowAiGenerate] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
@@ -102,18 +132,6 @@ export function Skills() {
   const [aiSaving, setAiSaving] = useState(false);
   const [aiError, setAiError] = useState('');
 
-  // ── Fetch org ────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!session?.user?.id) return;
-    fetch(`/api/organizations?userId=${session.user.id}`, { credentials: 'include' })
-      .then(r => r.json())
-      .then(d => {
-        if (d.organizations?.[0]) {
-          setOrgId(d.organizations[0].id);
-          setUserRole(d.organizations[0].role || 'STAFF');
-        }
-      }).catch(console.error);
-  }, [session]);
 
   const headers = useCallback(() => ({ 'x-org-id': orgId, 'Content-Type': 'application/json' }), [orgId]);
 
@@ -167,6 +185,28 @@ export function Skills() {
       await apiFetch(`/api/skills/staff/${skillId}`, { method: 'DELETE' });
       await fetchAll();
     } catch (err) { console.error(err); }
+  };
+
+  // ── Assign skill to a team member ─────────────────────────────────────────
+  const handleAssignSkill = async () => {
+    if (!assignTarget || !assignSkillId) return;
+    setAssignSaving(true);
+    setAssignError('');
+    try {
+      const res = await apiFetch('/api/skills/staff', {
+        method: 'PUT',
+        body: JSON.stringify({ skillId: assignSkillId, level: assignLevel, targetUserId: assignTarget.userId }),
+      });
+      if (res.ok) {
+        await fetchAll();
+        setAssignTarget(null);
+        setAssignSkillId(''); setAssignLevel(5); setAssignSearch('');
+      } else {
+        const d = await res.json().catch(() => ({}));
+        setAssignError(d.error || `Error ${res.status}`);
+      }
+    } catch (err: any) { setAssignError(err.message || 'Failed to assign skill'); }
+    finally { setAssignSaving(false); }
   };
 
   // ── AI generate skills ────────────────────────────────────────────────────
@@ -256,7 +296,7 @@ export function Skills() {
     (skillSearch === '' || s.name.toLowerCase().includes(skillSearch.toLowerCase()) || s.category.toLowerCase().includes(skillSearch.toLowerCase()))
   );
 
-  const isPrivileged = userRole === 'OWNER' || userRole === 'ADMIN';
+  const isPrivileged = userRole === 'OWNER' || userRole === 'ADMIN' || userRole === 'HALL_OF_JUSTICE';
 
   // ── Group my skills by category ───────────────────────────────────────────
   const grouped = mySkills.reduce((acc, s) => {
@@ -295,18 +335,14 @@ export function Skills() {
           <p style={{ color: VS.text2, marginTop: 4, fontSize: 14 }}>Manage your skillset and team capabilities</p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {isPrivileged && (
-            <>
-              <button onClick={() => setShowAiGenerate(true)}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: VS.bg2, border: `1px solid ${VS.border2}`, borderRadius: 6, color: VS.text1, fontSize: 13, cursor: 'pointer', fontWeight: 500 }}>
-                <Sparkles style={{ width: 15, height: 15, color: VS.yellow }} />Generate with AI
-              </button>
-              <button onClick={() => setShowAddLibrary(true)}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: VS.bg2, border: `1px solid ${VS.border2}`, borderRadius: 6, color: VS.text1, fontSize: 13, cursor: 'pointer', fontWeight: 500 }}>
-                <Plus style={{ width: 15, height: 15 }} />Add to Library
-              </button>
-            </>
-          )}
+          <button onClick={() => setShowAiGenerate(true)}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: VS.bg2, border: `1px solid ${VS.border2}`, borderRadius: 6, color: VS.text1, fontSize: 13, cursor: 'pointer', fontWeight: 500 }}>
+            <Sparkles style={{ width: 15, height: 15, color: VS.yellow }} />Generate with AI
+          </button>
+          <button onClick={() => setShowAddLibrary(true)}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: VS.bg2, border: `1px solid ${VS.border2}`, borderRadius: 6, color: VS.text1, fontSize: 13, cursor: 'pointer', fontWeight: 500 }}>
+            <Plus style={{ width: 15, height: 15 }} />Add to Library
+          </button>
           <button onClick={() => setShowAddSkill(true)}
             style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: VS.accent, border: 'none', borderRadius: 6, color: '#fff', fontSize: 13, cursor: 'pointer', fontWeight: 600 }}>
             <Plus style={{ width: 15, height: 15 }} />Add Skill
@@ -367,7 +403,7 @@ export function Skills() {
                           <Trash2 style={{ width: 15, height: 15 }} />
                         </button>
                       </div>
-                      <LevelStars level={s.level} />
+                      <LevelPicker level={s.level} />
                       {s.yearsExp > 0 && <p style={{ fontSize: 12, color: VS.text2, marginTop: 8 }}>{s.yearsExp} yr{s.yearsExp !== 1 ? 's' : ''} experience</p>}
                       {s.notes && <p style={{ fontSize: 12, color: VS.text2, marginTop: 4, fontStyle: 'italic' }}>{s.notes}</p>}
                     </div>
@@ -419,19 +455,29 @@ export function Skills() {
 
                 {expandedMember === member.userId && (
                   <div style={{ borderTop: `1px solid ${VS.border}`, padding: '16px 20px 20px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+                      <button onClick={() => { setAssignTarget({ userId: member.userId, name: member.name }); setAssignSkillId(''); setAssignLevel(5); setAssignSearch(''); setAssignError(''); }}
+                        style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px', background: VS.accent, border: 'none', borderRadius: 6, color: '#fff', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>
+                        <Plus style={{ width: 12, height: 12 }} />Assign Skill
+                      </button>
+                    </div>
                     {member.skills.length === 0 ? (
                       <p style={{ fontSize: 13, color: VS.text2, fontStyle: 'italic' }}>No skills added yet</p>
                     ) : (
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                         {member.skills.map(s => (
-                          <div key={s.skillId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: VS.bg2, borderRadius: 6, border: `1px solid ${VS.border}` }}>
-                            <div>
-                              <p style={{ fontSize: 13, fontWeight: 500, color: VS.text0, margin: 0 }}>{s.name}</p>
-                              <p style={{ fontSize: 11, color: VS.text2, margin: '2px 0 0' }}>{s.category}</p>
+                          <div key={s.skillId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: VS.bg2, borderRadius: 6, border: `1px solid ${VS.border}` }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                              <span style={{ fontSize: 13, fontWeight: 500, color: VS.text0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
+                              <span style={{ fontSize: 11, color: VS.text2, flexShrink: 0 }}>{s.category}</span>
                             </div>
-                            <div style={{ textAlign: 'right' }}>
-                              <LevelStars level={s.level} />
-                              <p style={{ fontSize: 11, marginTop: 4, color: LEVEL_TEXT[s.level] }}>{LEVEL_LABELS[s.level]}</p>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                              <div style={{ display: 'flex', gap: 2 }}>
+                                {Array.from({ length: 10 }, (_, i) => i + 1).map(i => (
+                                  <div key={i} style={{ width: 14, height: 14, borderRadius: 2, background: i <= s.level ? `${levelColor(s.level)}88` : VS.bg3, border: `1px solid ${i <= s.level ? levelColor(s.level) : '#444'}` }} />
+                                ))}
+                              </div>
+                              <span style={{ fontSize: 11, fontWeight: 600, color: LEVEL_TEXT[s.level], minWidth: 72, textAlign: 'right' }}>{s.level}/10 · {LEVEL_LABELS[s.level]}</span>
                             </div>
                           </div>
                         ))}
@@ -456,12 +502,10 @@ export function Skills() {
             <div style={{ textAlign: 'center', padding: '32px 0' }}>
               <Layers style={{ width: 40, height: 40, color: VS.text2, margin: '0 auto 12px' }} />
               <p style={{ color: VS.text2, fontSize: 14, marginBottom: 16 }}>No skills in library yet</p>
-              {isPrivileged && (
-                <button onClick={() => setShowAddLibrary(true)}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: VS.accent, border: 'none', borderRadius: 6, color: '#fff', fontSize: 13, cursor: 'pointer', fontWeight: 600 }}>
-                  <Plus style={{ width: 14, height: 14 }} />Add First Skill
-                </button>
-              )}
+              <button onClick={() => setShowAddLibrary(true)}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: VS.accent, border: 'none', borderRadius: 6, color: '#fff', fontSize: 13, cursor: 'pointer', fontWeight: 600 }}>
+                <Plus style={{ width: 14, height: 14 }} />Add First Skill
+              </button>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -476,14 +520,12 @@ export function Skills() {
                         <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px', background: VS.bg2, border: `1px solid ${VS.border}`, borderRadius: 6, fontSize: 13 }}>
                           <span style={{ color: VS.text1 }}>{s.name}</span>
                           <span style={{ fontSize: 11, color: VS.text2 }}>({s._count?.staffSkills || 0})</span>
-                          {isPrivileged && (
-                            <button onClick={async () => { await apiFetch(`/api/skills/library/${s.id}`, { method: 'DELETE' }); fetchAll(); }}
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: VS.text2, padding: 0, lineHeight: 1, transition: 'color 0.15s' }}
-                              onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = VS.red}
-                              onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = VS.text2}>
-                              <X style={{ width: 12, height: 12 }} />
-                            </button>
-                          )}
+                          <button onClick={async () => { await apiFetch(`/api/skills/library/${s.id}`, { method: 'DELETE' }); fetchAll(); }}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: VS.text2, padding: 0, lineHeight: 1, transition: 'color 0.15s' }}
+                            onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = VS.red}
+                            onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = VS.text2}>
+                            <X style={{ width: 12, height: 12 }} />
+                          </button>
                         </div>
                       ))}
                     </div>
@@ -545,7 +587,7 @@ export function Skills() {
               <div>
                 <label style={labelStyle}>Proficiency Level</label>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <LevelStars level={selectedLevel} onChange={setSelectedLevel} />
+                  <LevelPicker level={selectedLevel} onChange={setSelectedLevel} />
                   <span style={{ fontSize: 13, fontWeight: 500, color: LEVEL_TEXT[selectedLevel] }}>{LEVEL_LABELS[selectedLevel]}</span>
                 </div>
               </div>
@@ -582,7 +624,7 @@ export function Skills() {
       )}
 
       {/* ── AI GENERATE SKILLS MODAL ───────────────────────────────────────── */}
-      {showAiGenerate && isPrivileged && (
+      {showAiGenerate && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
           <div style={{ background: VS.bg1, border: `1px solid ${VS.border2}`, borderRadius: 8, padding: 28, width: '100%', maxWidth: 640, boxShadow: '0 24px 64px rgba(0,0,0,0.7)', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
             {/* Header */}
@@ -665,7 +707,7 @@ export function Skills() {
       )}
 
       {/* ── ADD TO LIBRARY MODAL ───────────────────────────────────────────── */}
-      {showAddLibrary && isPrivileged && (
+      {showAddLibrary && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
           <div style={{ background: VS.bg1, border: `1px solid ${VS.border2}`, borderRadius: 8, padding: 28, width: '100%', maxWidth: 380, boxShadow: '0 24px 64px rgba(0,0,0,0.7)' }}>
             {/* Header */}
@@ -701,6 +743,71 @@ export function Skills() {
                 <button onClick={handleAddToLibrary} disabled={!newSkillName.trim() || savingLibrary}
                   style={{ flex: 1, padding: '9px 0', background: newSkillName.trim() && !savingLibrary ? VS.accent : VS.bg3, border: 'none', borderRadius: 6, color: newSkillName.trim() && !savingLibrary ? '#fff' : VS.text2, fontSize: 13, cursor: newSkillName.trim() && !savingLibrary ? 'pointer' : 'not-allowed', fontWeight: 600 }}>
                   {savingLibrary ? 'Adding...' : 'Add Skill'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── ASSIGN SKILL TO MEMBER MODAL ───────────────────────────────────── */}
+      {assignTarget && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div style={{ background: VS.bg1, border: `1px solid ${VS.border2}`, borderRadius: 8, padding: 28, width: '100%', maxWidth: 440, boxShadow: '0 24px 64px rgba(0,0,0,0.7)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+              <h2 style={{ fontSize: 17, fontWeight: 700, color: VS.text0, margin: 0 }}>Assign Skill to {assignTarget.name}</h2>
+              <button onClick={() => setAssignTarget(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: VS.text2, padding: 4, lineHeight: 1 }}>
+                <X style={{ width: 18, height: 18 }} />
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+              {/* Skill search */}
+              <div>
+                <label style={labelStyle}>Select Skill</label>
+                <div style={{ position: 'relative', marginBottom: 8 }}>
+                  <Search style={{ position: 'absolute', left: 10, top: 9, width: 14, height: 14, color: VS.text2 }} />
+                  <input value={assignSearch} onChange={e => setAssignSearch(e.target.value)}
+                    placeholder="Search skills..." style={{ ...inputStyle, paddingLeft: 32 }} />
+                </div>
+                <div style={{ maxHeight: 176, overflowY: 'auto', border: `1px solid ${VS.border}`, borderRadius: 6, background: VS.bg2, padding: 6, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {library.filter(s => assignSearch === '' || s.name.toLowerCase().includes(assignSearch.toLowerCase())).length === 0 ? (
+                    <p style={{ fontSize: 13, color: VS.text2, textAlign: 'center', padding: '16px 0' }}>No skills found</p>
+                  ) : library.filter(s => assignSearch === '' || s.name.toLowerCase().includes(assignSearch.toLowerCase())).map(s => {
+                    const selected = assignSkillId === s.id;
+                    return (
+                      <button key={s.id} onClick={() => setAssignSkillId(s.id)}
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 10px', borderRadius: 5, border: selected ? `1px solid ${VS.accent}55` : '1px solid transparent', background: selected ? `${VS.accent}22` : 'transparent', cursor: 'pointer', textAlign: 'left' }}>
+                        <span style={{ fontSize: 13, color: VS.text0 }}>{s.name}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ fontSize: 11, color: VS.text2 }}>{s.category}</span>
+                          {selected && <Check style={{ width: 13, height: 13, color: VS.accent }} />}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Level */}
+              <div>
+                <label style={labelStyle}>Proficiency Level</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <LevelPicker level={assignLevel} onChange={setAssignLevel} />
+                  <span style={{ fontSize: 13, fontWeight: 500, color: LEVEL_TEXT[assignLevel] }}>{LEVEL_LABELS[assignLevel]}</span>
+                </div>
+              </div>
+
+              {assignError && <p style={{ fontSize: 13, color: VS.red }}>{assignError}</p>}
+
+              <div style={{ display: 'flex', gap: 10, paddingTop: 4 }}>
+                <button onClick={() => setAssignTarget(null)}
+                  style={{ flex: 1, padding: '9px 0', background: VS.bg2, border: `1px solid ${VS.border2}`, borderRadius: 6, color: VS.text1, fontSize: 13, cursor: 'pointer', fontWeight: 500 }}>
+                  Cancel
+                </button>
+                <button onClick={handleAssignSkill} disabled={!assignSkillId || assignSaving}
+                  style={{ flex: 1, padding: '9px 0', background: assignSkillId && !assignSaving ? VS.accent : VS.bg3, border: 'none', borderRadius: 6, color: assignSkillId && !assignSaving ? '#fff' : VS.text2, fontSize: 13, cursor: assignSkillId && !assignSaving ? 'pointer' : 'not-allowed', fontWeight: 600 }}>
+                  {assignSaving ? 'Assigning...' : 'Assign Skill'}
                 </button>
               </div>
             </div>

@@ -311,7 +311,7 @@ router.get('/accept/:token', async (req, res) => {
         const notifySet = new Set();
         if (invitation.invitedById) notifySet.add(invitation.invitedById);
         const admins = await prisma.membership.findMany({
-          where: { orgId: invitation.orgId, role: { in: ['OWNER', 'ADMIN'] } },
+          where: { orgId: invitation.orgId, role: { in: ['OWNER', 'ADMIN', 'HALL_OF_JUSTICE'] } },
           select: { userId: true },
         });
         admins.forEach(a => notifySet.add(a.userId));

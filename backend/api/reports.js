@@ -55,114 +55,50 @@ router.get('/financial', requireAuth, async (req, res) => {
       periods.push({ start: periodStart, end: periodEnd });
     }
 
-    const reportData = [];
-
-    for (const { start, end } of periods) {
-      // Get hours tracked (only real data we have)
-      const hoursStats = await prisma.timeLog.aggregate({
-        where: {
-          orgId: orgId,
-          begin: {
-            gte: start,
-            lte: end
-          },
-          end: { not: null }
-        },
-        _sum: {
-          duration: true
-        }
-      });
-
-      // Get real invoice data
-      const invoiceStats = await prisma.invoice.aggregate({
-        where: {
-          orgId: orgId,
-          createdAt: {
-            gte: start,
-            lte: end
-          },
-          status: { in: ['sent', 'paid'] }
-        },
-        _sum: {
-          totalAmount: true
-        },
-        _count: true
-      });
-      
-      // Get real expense data
-      const expenseStats = await prisma.expense.aggregate({
-        where: {
-          orgId: orgId,
-          expenseDate: {
-            gte: start,
-            lte: end
+    const reportData = await Promise.all(periods.map(async ({ start, end }) => {
+      const [hoursStats, invoiceStats, expenseStats, projectsCompleted, activeClients] = await Promise.all([
+        prisma.timeLog.aggregate({
+          where: { orgId, begin: { gte: start, lte: end }, end: { not: null } },
+          _sum: { duration: true }
+        }),
+        prisma.invoice.aggregate({
+          where: { orgId, createdAt: { gte: start, lte: end }, status: { in: ['sent', 'paid'] } },
+          _sum: { totalAmount: true },
+          _count: true
+        }),
+        prisma.expense.aggregate({
+          where: { orgId, expenseDate: { gte: start, lte: end } },
+          _sum: { amount: true }
+        }),
+        prisma.project.count({
+          where: { orgId, status: 'completed', updatedAt: { gte: start, lte: end } }
+        }),
+        prisma.client.count({
+          where: {
+            orgId,
+            OR: [
+              { projects: { some: { updatedAt: { gte: start, lte: end } } } },
+              { invoices: { some: { createdAt: { gte: start, lte: end } } } }
+            ]
           }
-        },
-        _sum: {
-          amount: true
-        }
-      });
-      
-      // Get projects completed in this period
-      const projectsCompleted = await prisma.project.count({
-        where: {
-          orgId: orgId,
-          status: 'completed',
-          updatedAt: {
-            gte: start,
-            lte: end
-          }
-        }
-      });
-      
-      // Get active clients (clients with activity in this period)
-      const activeClients = await prisma.client.findMany({
-        where: {
-          orgId: orgId,
-          OR: [
-            {
-              projects: {
-                some: {
-                  updatedAt: {
-                    gte: start,
-                    lte: end
-                  }
-                }
-              }
-            },
-            {
-              invoices: {
-                some: {
-                  createdAt: {
-                    gte: start,
-                    lte: end
-                  }
-                }
-              }
-            }
-          ]
-        },
-        select: { id: true }
-      });
+        }),
+      ]);
 
       const revenue = invoiceStats._sum.totalAmount || 0;
       const expenses = expenseStats._sum.amount || 0;
-      const profit = revenue - expenses;
-      const hoursTracked = Math.round((hoursStats._sum.duration || 0) / 3600); // Convert to hours
-      const averageHourlyRate = hoursTracked > 0 ? Math.round(revenue / hoursTracked) : 0;
-
-      reportData.push({
+      const hoursTracked = Math.round((hoursStats._sum.duration || 0) / 3600);
+      return {
         period: `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}`,
         revenue,
         expenses,
-        profit,
+        profit: revenue - expenses,
         hoursTracked,
         projectsCompleted,
-        clientsActive: activeClients.length,
+        clientsActive: activeClients,
         invoicesSent: invoiceStats._count || 0,
-        averageHourlyRate
-      });
-    }
+        averageHourlyRate: hoursTracked > 0 ? Math.round(revenue / hoursTracked) : 0
+      };
+    }));
 
     res.json({
       success: true,

@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom';
 import {
   FileText, Plus, Users, X, Save, Trash2,
   Calendar, Search, Clock, TrendingUp, FolderOpen, AlertCircle,
+  Paperclip, File, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 
 import { VS } from '../lib/theme';
@@ -23,6 +24,16 @@ interface Report {
 }
 interface ProjectItem { id: string; name: string; color: string; }
 interface MemberItem  { id: string; name: string; role: string; }
+
+type Attachment = { name: string; type: string; dataUrl: string };
+function parseAttachments(image: string | null): Attachment[] {
+  if (!image) return [];
+  if (image.startsWith('[')) {
+    try { return JSON.parse(image); } catch { return []; }
+  }
+  // Legacy: single base64 image string
+  return [{ name: 'image', type: 'image/png', dataUrl: image }];
+}
 
 function fmtDate(d: string | Date) {
   return new Date(d).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -55,10 +66,11 @@ function initials(name?: string | null, email?: string | null) {
 
 // ── Avatar ────────────────────────────────────────────────────────────────────
 function Avatar({ name, image, size = 26 }: { name: string; image?: string | null; size?: number }) {
+  const [imgError, setImgError] = useState(false);
   const pal   = [VS.blue, VS.purple, VS.teal, VS.yellow, VS.orange];
   const color = pal[(name?.charCodeAt(0) ?? 0) % pal.length];
-  return image
-    ? <img src={image} alt={name} style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+  return image && !imgError
+    ? <img src={image} alt={name} onError={() => setImgError(true)} style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
     : <div style={{ width: size, height: size, borderRadius: '50%', background: `${color}28`, border: `1px solid ${color}55`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.36, fontWeight: 700, color, flexShrink: 0 }}>
         {initials(name)}
       </div>;
@@ -72,20 +84,32 @@ function CreateModal({ projects, onClose, onCreated }: {
 }) {
   const { data: session }   = useSession();
   const api                 = useApiClient();
-  const [name, setName]     = useState(session?.user?.name || (session?.user as any)?.email?.split('@')[0] || '');
+  const [name, setName]       = useState(session?.user?.name || (session?.user as any)?.email?.split('@')[0] || '');
   const [project, setProject] = useState('');
-  const [desc, setDesc]     = useState('');
-  const [image, setImage]   = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [err, setErr]       = useState('');
+  const [desc, setDesc]       = useState('');
+  const [attachments, setAttachments] = useState<{ name: string; type: string; dataUrl: string }[]>([]);
+  const [lightbox, setLightbox] = useState<number | null>(null); // index into attachments
+  const [saving, setSaving]   = useState(false);
+  const [err, setErr]         = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
 
-  const handleImage = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    const reader = new FileReader();
-    reader.onload = ev => setImage(ev.target?.result as string);
-    reader.readAsDataURL(f);
+  const addFiles = (files: File[]) => {
+    files.forEach(f => {
+      const reader = new FileReader();
+      reader.onload = ev => {
+        setAttachments(prev => [...prev, { name: f.name, type: f.type, dataUrl: ev.target?.result as string }]);
+      };
+      reader.readAsDataURL(f);
+    });
   };
+
+  const handleFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
+    addFiles(Array.from(e.target.files || []));
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const removeAttachment = (i: number) => setAttachments(prev => prev.filter((_, idx) => idx !== i));
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -100,7 +124,7 @@ function CreateModal({ projects, onClose, onCreated }: {
           title:       projName ? `${projName} — Report` : undefined,
           description: desc.trim(),
           userName:    name.trim(),
-          image:       image || undefined,
+          image:       attachments.length > 0 ? JSON.stringify(attachments) : undefined,
           projectId:   project || undefined,
         }),
       });
@@ -161,14 +185,108 @@ function CreateModal({ projects, onClose, onCreated }: {
           </div>
 
           <div>
-            <label style={lbl}>Screenshot (optional)</label>
-            <input type="file" accept="image/*" onChange={handleImage} style={{ ...inp, padding: '6px 12px', cursor: 'pointer', color: VS.text1 }} />
-            {image && (
-              <div style={{ marginTop: 8, position: 'relative' }}>
-                <img src={image} alt="Preview" style={{ width: '100%', maxHeight: 200, objectFit: 'contain', borderRadius: 6, border: `1px solid ${VS.border}` }} />
-                <button type="button" onClick={() => setImage(null)}
-                  style={{ position: 'absolute', top: 6, right: 6, background: VS.red, border: 'none', borderRadius: '50%', width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', cursor: 'pointer' }}>
-                  <X size={12} />
+            <label style={lbl}>Attachments (optional)</label>
+            {/* Hidden file input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.csv,.txt"
+              onChange={handleFiles}
+              style={{ display: 'none' }}
+            />
+            {/* Drop zone wrapping button + thumbnails */}
+            <div
+              onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={e => { e.preventDefault(); setDragOver(false); addFiles(Array.from(e.dataTransfer.files)); }}
+              style={{ border: `1px dashed ${dragOver ? VS.accent : VS.border}`, borderRadius: 8, padding: 10, background: dragOver ? 'rgba(0,122,204,0.06)' : 'transparent', transition: 'border-color 0.15s, background 0.15s' }}
+            >
+            <button type="button" onClick={() => fileInputRef.current?.click()}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: VS.bg3, border: `1px solid ${VS.border}`, borderRadius: 8, padding: '7px 14px', fontSize: 12, color: VS.text1, cursor: 'pointer' }}>
+              <Paperclip size={13} /> Attach Files
+            </button>
+
+            {/* Thumbnail grid */}
+            {attachments.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 12 }}>
+                {attachments.map((a, i) => {
+                  const isImg = a.type.startsWith('image/');
+                  return (
+                    <div key={i} style={{ position: 'relative', width: 80, height: 80 }}>
+                      {/* Thumbnail */}
+                      <div
+                        onClick={() => isImg && setLightbox(i)}
+                        style={{
+                          width: 80, height: 80, borderRadius: 8,
+                          border: `1px solid ${VS.border}`,
+                          background: VS.bg2,
+                          overflow: 'hidden',
+                          cursor: isImg ? 'zoom-in' : 'default',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}
+                      >
+                        {isImg
+                          ? <img src={a.dataUrl} alt={a.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          : (
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: 8 }}>
+                              <File size={24} style={{ color: VS.accent }} />
+                              <span style={{ fontSize: 9, color: VS.text2, textAlign: 'center', wordBreak: 'break-all', lineHeight: 1.2 }}>
+                                {a.name.length > 12 ? a.name.slice(0, 10) + '…' : a.name}
+                              </span>
+                            </div>
+                          )
+                        }
+                      </div>
+                      {/* X remove button */}
+                      <button type="button" onClick={() => removeAttachment(i)}
+                        style={{ position: 'absolute', top: -6, right: -6, background: VS.red, border: 'none', borderRadius: '50%', width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', cursor: 'pointer', padding: 0 }}>
+                        <X size={10} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            </div>{/* end drop zone */}
+
+            {/* Lightbox */}
+            {lightbox !== null && (
+              <div
+                onClick={() => setLightbox(null)}
+                style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.88)', zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <img
+                  src={attachments[lightbox].dataUrl}
+                  alt={attachments[lightbox].name}
+                  style={{ maxWidth: '90vw', maxHeight: '85vh', objectFit: 'contain', borderRadius: 8 }}
+                  onClick={e => e.stopPropagation()}
+                />
+                {/* Prev / Next */}
+                {attachments.filter(a => a.type.startsWith('image/')).length > 1 && (() => {
+                  const imgIndexes = attachments.map((a, i) => a.type.startsWith('image/') ? i : -1).filter(i => i >= 0);
+                  const pos = imgIndexes.indexOf(lightbox);
+                  return (
+                    <>
+                      {pos > 0 && (
+                        <button onClick={e => { e.stopPropagation(); setLightbox(imgIndexes[pos - 1]); }}
+                          style={{ position: 'fixed', left: 16, top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.5)', border: 'none', borderRadius: '50%', width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', cursor: 'pointer' }}>
+                          <ChevronLeft size={20} />
+                        </button>
+                      )}
+                      {pos < imgIndexes.length - 1 && (
+                        <button onClick={e => { e.stopPropagation(); setLightbox(imgIndexes[pos + 1]); }}
+                          style={{ position: 'fixed', right: 16, top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.5)', border: 'none', borderRadius: '50%', width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', cursor: 'pointer' }}>
+                          <ChevronRight size={20} />
+                        </button>
+                      )}
+                    </>
+                  );
+                })()}
+                {/* Close */}
+                <button onClick={() => setLightbox(null)}
+                  style={{ position: 'fixed', top: 16, right: 16, background: 'rgba(0,0,0,0.5)', border: 'none', borderRadius: '50%', width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', cursor: 'pointer' }}>
+                  <X size={18} />
                 </button>
               </div>
             )}
@@ -188,6 +306,74 @@ function CreateModal({ projects, onClose, onCreated }: {
       </div>
     </div>,
     document.body
+  );
+}
+
+// ── Report Attachments (thumbnails + lightbox) ────────────────────────────────
+function ReportAttachments({ attachments }: { attachments: Attachment[] }) {
+  const [lightbox, setLightbox] = useState<number | null>(null);
+  const imgIndexes = attachments.map((a, i) => a.type.startsWith('image/') ? i : -1).filter(i => i >= 0);
+
+  return (
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: VS.text2, marginBottom: 8 }}>
+        Attachments ({attachments.length})
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+        {attachments.map((a, i) => {
+          const isImg = a.type.startsWith('image/');
+          return (
+            <div key={i} onClick={() => isImg && setLightbox(i)}
+              style={{ width: 80, height: 80, borderRadius: 8, border: `1px solid ${VS.border}`, background: VS.bg2, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: isImg ? 'zoom-in' : 'default', flexShrink: 0 }}>
+              {isImg
+                ? <img src={a.dataUrl} alt={a.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                : (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: 8 }}>
+                    <File size={24} style={{ color: VS.accent }} />
+                    <span style={{ fontSize: 9, color: VS.text2, textAlign: 'center', wordBreak: 'break-all', lineHeight: 1.2 }}>
+                      {a.name.length > 12 ? a.name.slice(0, 10) + '…' : a.name}
+                    </span>
+                  </div>
+                )
+              }
+            </div>
+          );
+        })}
+      </div>
+
+      {lightbox !== null && createPortal(
+        <div onClick={() => setLightbox(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.88)', zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <img src={attachments[lightbox].dataUrl} alt={attachments[lightbox].name}
+            style={{ maxWidth: '90vw', maxHeight: '85vh', objectFit: 'contain', borderRadius: 8 }}
+            onClick={e => e.stopPropagation()} />
+          {imgIndexes.length > 1 && (() => {
+            const pos = imgIndexes.indexOf(lightbox);
+            return (
+              <>
+                {pos > 0 && (
+                  <button onClick={e => { e.stopPropagation(); setLightbox(imgIndexes[pos - 1]); }}
+                    style={{ position: 'fixed', left: 16, top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.5)', border: 'none', borderRadius: '50%', width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', cursor: 'pointer' }}>
+                    <ChevronLeft size={20} />
+                  </button>
+                )}
+                {pos < imgIndexes.length - 1 && (
+                  <button onClick={e => { e.stopPropagation(); setLightbox(imgIndexes[pos + 1]); }}
+                    style={{ position: 'fixed', right: 16, top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.5)', border: 'none', borderRadius: '50%', width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', cursor: 'pointer' }}>
+                    <ChevronRight size={20} />
+                  </button>
+                )}
+              </>
+            );
+          })()}
+          <button onClick={() => setLightbox(null)}
+            style={{ position: 'fixed', top: 16, right: 16, background: 'rgba(0,0,0,0.5)', border: 'none', borderRadius: '50%', width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', cursor: 'pointer' }}>
+            <X size={18} />
+          </button>
+        </div>,
+        document.body
+      )}
+    </div>
   );
 }
 
@@ -273,18 +459,12 @@ function DetailModal({ report, isPrivileged, onClose, onDelete, session }: {
             </div>
           </div>
 
-          {/* Image */}
-          {report.image && (
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: VS.text2, marginBottom: 8 }}>Attachment</div>
-              <img
-                src={report.image}
-                alt="Attachment"
-                onClick={() => window.open(report.image!, '_blank')}
-                style={{ width: '100%', maxHeight: 380, objectFit: 'contain', borderRadius: 8, border: `1px solid ${VS.border}`, cursor: 'zoom-in' }}
-              />
-            </div>
-          )}
+          {/* Attachments */}
+          {(() => {
+            const atts = parseAttachments(report.image);
+            if (!atts.length) return null;
+            return <ReportAttachments attachments={atts} />;
+          })()}
         </div>
       </div>
     </div>,
@@ -526,13 +706,25 @@ export function Reports() {
                     {report.description.length > 160 ? `${report.description.slice(0, 160)}…` : report.description}
                   </div>
 
-                  {/* Image */}
-                  {report.image && (
-                    <div style={{ marginTop: 8 }}>
-                      <img src={report.image} alt="Attachment" onClick={e => { e.stopPropagation(); window.open(report.image!, '_blank'); }}
-                        style={{ width: '100%', maxHeight: 160, objectFit: 'contain', borderRadius: 5, border: `1px solid ${VS.border}`, cursor: 'zoom-in' }} />
-                    </div>
-                  )}
+                  {/* Attachments preview */}
+                  {(() => {
+                    const atts = parseAttachments(report.image);
+                    if (!atts.length) return null;
+                    return (
+                      <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {atts.slice(0, 4).map((a, i) => (
+                          <div key={i} onClick={e => e.stopPropagation()}
+                            style={{ width: 48, height: 48, borderRadius: 6, border: `1px solid ${VS.border}`, background: VS.bg2, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            {a.type.startsWith('image/')
+                              ? <img src={a.dataUrl} alt={a.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                              : <File size={18} style={{ color: VS.accent }} />
+                            }
+                          </div>
+                        ))}
+                        {atts.length > 4 && <div style={{ width: 48, height: 48, borderRadius: 6, border: `1px solid ${VS.border}`, background: VS.bg2, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: VS.text2 }}>+{atts.length - 4}</div>}
+                      </div>
+                    );
+                  })()}
 
                   {/* Footer */}
                   <div style={{ display: 'flex', alignItems: 'center', marginTop: 8, paddingTop: 8, borderTop: `1px solid ${VS.border}` }}>

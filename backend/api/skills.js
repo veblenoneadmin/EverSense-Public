@@ -133,7 +133,6 @@ router.get('/team', requireAuth, withOrgScope, async (req, res) => {
       where: { orgId: req.orgId, role: { not: 'CLIENT' } },
       include: {
         user: {
-          select: { id: true, name: true, email: true, image: true },
           include: {
             staffSkills: {
               where: { orgId: req.orgId },
@@ -169,14 +168,26 @@ router.get('/team', requireAuth, withOrgScope, async (req, res) => {
 });
 
 // PUT /api/skills/staff — upsert a skill for a user
+// Admins/owners can pass targetUserId to assign to someone else
 router.put('/staff', requireAuth, withOrgScope, async (req, res) => {
   try {
     await ensureSkillsTables();
-    const { skillId, level, yearsExp, notes } = req.body;
-    const userId = req.user.id;
+    const { skillId, level, yearsExp, notes, targetUserId } = req.body;
+
+    // Allow admins/owners to assign skills to other users
+    let userId = req.user.id;
+    if (targetUserId && targetUserId !== req.user.id) {
+      const membership = await prisma.membership.findUnique({
+        where: { userId_orgId: { userId: req.user.id, orgId: req.orgId } },
+        select: { role: true },
+      });
+      const privileged = ['OWNER', 'ADMIN', 'HALL_OF_JUSTICE'].includes(membership?.role);
+      if (!privileged) return res.status(403).json({ error: 'Only admins can assign skills to other users' });
+      userId = targetUserId;
+    }
 
     if (!skillId || !level) return res.status(400).json({ error: 'skillId and level required' });
-    if (level < 1 || level > 5) return res.status(400).json({ error: 'level must be 1-5' });
+    if (level < 1 || level > 10) return res.status(400).json({ error: 'level must be 1-10' });
 
     const staffSkill = await prisma.staffSkill.upsert({
       where: { userId_skillId: { userId, skillId } },
@@ -313,7 +324,7 @@ router.post('/library/bulk', requireAuth, withOrgScope, async (req, res) => {
 // AI TASK AUTO-ASSIGN
 // ─────────────────────────────────────────────────────────────────────────────
 
-const LEVEL_LABEL = { 1: 'Beginner', 2: 'Basic', 3: 'Intermediate', 4: 'Advanced', 5: 'Expert' };
+const LEVEL_LABEL = { 1: 'Novice', 2: 'Novice+', 3: 'Beginner', 4: 'Beginner+', 5: 'Intermediate', 6: 'Intermediate+', 7: 'Advanced', 8: 'Advanced+', 9: 'Expert', 10: 'Master' };
 
 // POST /api/skills/auto-assign — given a task, AI picks the best staff member
 router.post('/auto-assign', requireAuth, withOrgScope, async (req, res) => {

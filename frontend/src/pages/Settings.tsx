@@ -1,5 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSession, authClient } from '../lib/auth-client';
+import { useOrganization } from '../contexts/OrganizationContext';
+
 import {
   User,
   Bell,
@@ -13,13 +15,22 @@ import {
   Eye,
   EyeOff,
   Camera,
-  Trash2
+  Trash2,
+  Plug,
+  CheckCircle,
+  Key,
+  ExternalLink,
+  Coffee,
 } from 'lucide-react';
 
 import { VS } from '../lib/theme';
+import { useApiClient } from '../lib/api-client';
 
 export function Settings() {
   const { data: session } = useSession();
+  const apiClient = useApiClient();
+  const { currentOrg } = useOrganization();
+  const [userRole, setUserRole] = useState<string>('');
   const [activeTab, setActiveTab] = useState('profile');
 
   // Extract real user data from session
@@ -60,6 +71,30 @@ export function Settings() {
   const [passwordSaving, setPasswordSaving] = useState(false);
   const [passwordMsg, setPasswordMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // Integrations state
+  const [intStatus, setIntStatus] = useState<{ firefliesConfigured: boolean; firefliesKeyMasked: string | null; googleConnected: boolean } | null>(null);
+  const [ffKey, setFfKey] = useState('');
+  const [ffSaving, setFfSaving] = useState(false);
+  const [ffMsg, setFfMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [googleMsg, setGoogleMsg] = useState<string | null>(null);
+
+  // Avatar state
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(session?.user?.image ?? null);
+  const [avatarSaving, setAvatarSaving] = useState(false);
+  const [avatarMsg, setAvatarMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Attendance policy state (admin/owner only)
+  const isPrivileged = ['OWNER', 'ADMIN', 'HALL_OF_JUSTICE'].includes(userRole || '');
+  const [attPolicy, setAttPolicy] = useState({ breakLimitH: 0, breakLimitM: 30, breakCountPerDay: 1 });
+  const [attSaving, setAttSaving] = useState(false);
+  const [attMsg, setAttMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Sync avatar from session
+  useEffect(() => {
+    if (session?.user?.image) setAvatarUrl(session.user.image);
+  }, [session?.user?.image]);
+
   // Update profile data when session changes
   useEffect(() => {
     if (session?.user) {
@@ -77,6 +112,48 @@ export function Settings() {
     }
   }, [session]);
 
+  // Load role + attendance policy when org changes
+  useEffect(() => {
+    if (!currentOrg?.id) return;
+    // Fetch role via attendance logs endpoint (returns role)
+    fetch(`/api/attendance/logs?orgId=${currentOrg.id}`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.role) setUserRole(d.role); })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentOrg?.id]);
+
+  useEffect(() => {
+    if (!currentOrg?.id || !isPrivileged) return;
+    apiClient.fetch(`/api/attendance/policy?orgId=${currentOrg.id}`)
+      .then(d => {
+        const secs = d.breakLimitSecs ?? 1800;
+        setAttPolicy({
+          breakLimitH: Math.floor(secs / 3600),
+          breakLimitM: Math.round((secs % 3600) / 60),
+          breakCountPerDay: d.breakCountPerDay ?? 1,
+        });
+      })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentOrg?.id, isPrivileged]);
+
+  // Load integrations status + handle Google OAuth return
+  useEffect(() => {
+    apiClient.fetch('/api/integrations/status').then(d => setIntStatus(d)).catch(() => {});
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('tab') === 'integrations') {
+      setActiveTab('integrations');
+      const g = params.get('google');
+      if (g === 'connected') setGoogleMsg('Google Calendar connected successfully!');
+      else if (g === 'denied') setGoogleMsg('Google authorization was cancelled.');
+      else if (g === 'error') setGoogleMsg('Google authorization failed. Please try again.');
+      // Clean the URL
+      window.history.replaceState({}, '', '/settings');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   console.log('Settings page loaded with user:', session?.user?.name);
 
   const tabs = [
@@ -84,7 +161,9 @@ export function Settings() {
     { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'preferences', label: 'Preferences', icon: Palette },
     { id: 'billing', label: 'Billing', icon: DollarSign },
-    { id: 'security', label: 'Security', icon: Shield }
+    { id: 'security', label: 'Security', icon: Shield },
+    { id: 'integrations', label: 'Integrations', icon: Plug },
+    ...(isPrivileged ? [{ id: 'attendance', label: 'Attendance', icon: Coffee }] : []),
   ];
 
   const handleSaveProfile = async () => {
@@ -194,57 +273,104 @@ export function Settings() {
       <div style={cardStyle}>
         <p style={sectionTitleStyle}>Profile Picture</p>
         <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-          <div
-            style={{
-              height: 72,
-              width: 72,
-              borderRadius: '50%',
-              background: `linear-gradient(135deg, ${VS.accent}, ${VS.purple})`,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0,
-            }}
-          >
-            <span style={{ fontSize: 24, fontWeight: 700, color: 'white' }}>
-              {profile.firstName[0]}{profile.lastName[0]}
-            </span>
+          {/* Avatar preview */}
+          <div style={{ height: 72, width: 72, borderRadius: '50%', flexShrink: 0, overflow: 'hidden',
+            background: `linear-gradient(135deg, ${VS.accent}, ${VS.purple})`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {avatarUrl
+              ? <img src={avatarUrl} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              : <span style={{ fontSize: 24, fontWeight: 700, color: 'white' }}>
+                  {profile.firstName[0]}{profile.lastName[0]}
+                </span>
+            }
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              style={{
-                background: VS.bg3,
-                border: `1px solid ${VS.border}`,
-                borderRadius: 8,
-                color: VS.text0,
-                padding: '7px 14px',
-                fontSize: 12,
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-              }}
-            >
-              <Camera style={{ width: 14, height: 14 }} />
-              Upload Photo
-            </button>
-            <button
-              style={{
-                background: 'transparent',
-                border: `1px solid ${VS.border}`,
-                borderRadius: 8,
-                color: VS.text2,
-                padding: '7px 14px',
-                fontSize: 12,
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-              }}
-            >
-              <Trash2 style={{ width: 14, height: 14 }} />
-              Remove
-            </button>
+
+          {/* Hidden file input */}
+          <input ref={avatarInputRef} type="file" accept="image/*" style={{ display: 'none' }}
+            onChange={e => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              if (avatarInputRef.current) avatarInputRef.current.value = '';
+              const reader = new FileReader();
+              reader.onload = ev => {
+                const original = ev.target?.result as string;
+                // Resize to 128×128 on a canvas to keep payload small
+                const img = new Image();
+                img.onload = () => {
+                  const canvas = document.createElement('canvas');
+                  canvas.width = 128; canvas.height = 128;
+                  const ctx = canvas.getContext('2d')!;
+                  // Cover-crop: centre the image
+                  const scale = Math.max(128 / img.width, 128 / img.height);
+                  const w = img.width * scale, h = img.height * scale;
+                  ctx.drawImage(img, (128 - w) / 2, (128 - h) / 2, w, h);
+                  const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                  setAvatarUrl(dataUrl);
+                  setAvatarMsg(null);
+                  // Auto-save
+                  setAvatarSaving(true);
+                  fetch('/api/users/avatar', {
+                    method: 'POST', credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ dataUrl }),
+                  })
+                    .then(r => r.json())
+                    .then(d => {
+                      if (d.success) {
+                        setAvatarMsg({ type: 'success', text: 'Photo updated. Refreshing…' });
+                        setTimeout(() => window.location.reload(), 800);
+                      } else {
+                        setAvatarMsg({ type: 'error', text: d.error || 'Failed to save.' });
+                      }
+                    })
+                    .catch(() => setAvatarMsg({ type: 'error', text: 'Upload failed.' }))
+                    .finally(() => setAvatarSaving(false));
+                };
+                img.src = original;
+              };
+              reader.readAsDataURL(file);
+            }}
+          />
+
+          <div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => avatarInputRef.current?.click()} disabled={avatarSaving}
+                style={{ background: VS.bg3, border: `1px solid ${VS.border}`, borderRadius: 8,
+                  color: VS.text0, padding: '7px 14px', fontSize: 12, cursor: 'pointer',
+                  display: 'inline-flex', alignItems: 'center', gap: 6, opacity: avatarSaving ? 0.6 : 1 }}>
+                <Camera style={{ width: 14, height: 14 }} />
+                {avatarSaving ? 'Uploading…' : 'Upload Photo'}
+              </button>
+              {avatarUrl && (
+                <button disabled={avatarSaving}
+                  onClick={() => {
+                    setAvatarSaving(true); setAvatarMsg(null);
+                    fetch('/api/users/avatar', { method: 'DELETE', credentials: 'include' })
+                      .then(r => r.json())
+                      .then(d => {
+                        if (d.success) {
+                          setAvatarMsg({ type: 'success', text: 'Photo removed. Refreshing…' });
+                          setTimeout(() => window.location.reload(), 800);
+                        } else {
+                          setAvatarMsg({ type: 'error', text: d.error || 'Failed.' });
+                        }
+                      })
+                      .catch(() => setAvatarMsg({ type: 'error', text: 'Failed to remove.' }))
+                      .finally(() => setAvatarSaving(false));
+                  }}
+                  style={{ background: 'transparent', border: `1px solid ${VS.border}`, borderRadius: 8,
+                    color: VS.text2, padding: '7px 14px', fontSize: 12, cursor: 'pointer',
+                    display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <Trash2 style={{ width: 14, height: 14 }} />
+                  Remove
+                </button>
+              )}
+            </div>
+            {avatarMsg && (
+              <p style={{ fontSize: 12, marginTop: 8, color: avatarMsg.type === 'success' ? VS.teal : VS.red }}>
+                {avatarMsg.text}
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -605,6 +731,203 @@ export function Settings() {
             </button>
           </div>
         );
+      case 'integrations':
+        return (
+          <div className="space-y-6">
+            {/* Google Calendar */}
+            <div style={cardStyle}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                <img src="https://www.gstatic.com/images/branding/product/1x/calendar_48dp.png" alt="Google Calendar" style={{ width: 24, height: 24 }} />
+                <p style={sectionTitleStyle}>Google Calendar</p>
+              </div>
+              <p style={{ fontSize: 12, color: VS.text2, marginBottom: 16, marginTop: 0 }}>
+                Connect your Google account to create calendar events with Google Meet links.
+              </p>
+
+              {googleMsg && (
+                <p style={{ fontSize: 13, marginBottom: 12, color: googleMsg.includes('successfully') ? VS.teal : VS.red }}>
+                  {googleMsg}
+                </p>
+              )}
+
+              {intStatus?.googleConnected ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: VS.teal, fontSize: 13 }}>
+                    <CheckCircle style={{ width: 16, height: 16 }} />
+                    Google Calendar connected
+                  </div>
+                  <button
+                    onClick={async () => {
+                      await apiClient.fetch('/api/integrations/google', { method: 'DELETE' });
+                      setIntStatus(s => s ? { ...s, googleConnected: false } : s);
+                      setGoogleMsg('Google Calendar disconnected.');
+                    }}
+                    style={{ background: 'transparent', border: `1px solid ${VS.border}`, borderRadius: 6, color: VS.text2, padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              ) : (
+                <a
+                  href="/api/integrations/google/connect"
+                  style={{ ...saveButtonStyle, textDecoration: 'none', display: 'inline-flex' }}
+                >
+                  <ExternalLink style={{ width: 14, height: 14 }} />
+                  Connect Google Calendar
+                </a>
+              )}
+            </div>
+
+            {/* Fireflies */}
+            <div style={cardStyle}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                <Key style={{ width: 18, height: 18, color: VS.accent }} />
+                <p style={sectionTitleStyle}>Fireflies API Key</p>
+              </div>
+              <p style={{ fontSize: 12, color: VS.text2, marginBottom: 16, marginTop: 0 }}>
+                Enter your Fireflies.ai API key to enable meeting transcript sync for your organization.
+              </p>
+
+              {intStatus?.firefliesConfigured && (
+                <p style={{ fontSize: 12, color: VS.teal, marginBottom: 12 }}>
+                  Current key: {intStatus.firefliesKeyMasked}
+                </p>
+              )}
+
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type="password"
+                  value={ffKey}
+                  onChange={e => setFfKey(e.target.value)}
+                  placeholder={intStatus?.firefliesConfigured ? 'Enter new key to replace...' : 'Paste your Fireflies API key...'}
+                  style={{ ...inputStyle, flex: 1 }}
+                />
+                <button
+                  disabled={ffSaving || !ffKey.trim()}
+                  onClick={async () => {
+                    setFfSaving(true); setFfMsg(null);
+                    try {
+                      await apiClient.fetch('/api/integrations/fireflies', { method: 'PUT', body: JSON.stringify({ apiKey: ffKey }) });
+                      setFfMsg({ type: 'success', text: 'API key saved.' });
+                      setFfKey('');
+                      const d = await apiClient.fetch('/api/integrations/status');
+                      setIntStatus(d);
+                    } catch (e: unknown) {
+                      setFfMsg({ type: 'error', text: e instanceof Error ? e.message : 'Failed to save key.' });
+                    } finally { setFfSaving(false); }
+                  }}
+                  style={{ ...saveButtonStyle, opacity: (ffSaving || !ffKey.trim()) ? 0.5 : 1, whiteSpace: 'nowrap' }}
+                >
+                  <Save style={{ width: 14, height: 14 }} />
+                  {ffSaving ? 'Saving...' : 'Save Key'}
+                </button>
+              </div>
+
+              {ffMsg && (
+                <p style={{ fontSize: 13, marginTop: 10, color: ffMsg.type === 'success' ? VS.teal : VS.red }}>
+                  {ffMsg.text}
+                </p>
+              )}
+
+              {intStatus?.firefliesConfigured && (
+                <button
+                  onClick={async () => {
+                    await apiClient.fetch('/api/integrations/fireflies', { method: 'DELETE' });
+                    setIntStatus(s => s ? { ...s, firefliesConfigured: false, firefliesKeyMasked: null } : s);
+                    setFfMsg({ type: 'success', text: 'API key removed.' });
+                  }}
+                  style={{ marginTop: 10, background: 'transparent', border: `1px solid ${VS.border}`, borderRadius: 6, color: VS.red, padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
+                >
+                  Remove Key
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      case 'attendance':
+        return (
+          <div style={cardStyle}>
+            <p style={sectionTitleStyle}>Break Policy</p>
+            <p style={{ fontSize: 12, color: VS.text2, marginBottom: 20, marginTop: 0 }}>
+              Set the maximum break duration and how many breaks staff can take per day.
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+              {/* Max break duration */}
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: VS.text2, marginBottom: 8 }}>
+                  Max Break Duration
+                </label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ position: 'relative', width: 100 }}>
+                    <input
+                      type="number" min={0} max={9} value={attPolicy.breakLimitH}
+                      onChange={e => setAttPolicy(p => ({ ...p, breakLimitH: Math.max(0, Math.min(9, parseInt(e.target.value) || 0)) }))}
+                      style={{ width: '100%', background: VS.bg3, border: `1px solid ${VS.border2}`, borderRadius: 8, padding: '8px 32px 8px 12px', fontSize: 13, color: VS.text0, outline: 'none', boxSizing: 'border-box' }}
+                    />
+                    <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 11, color: VS.text2, pointerEvents: 'none' }}>h</span>
+                  </div>
+                  <div style={{ position: 'relative', width: 100 }}>
+                    <input
+                      type="number" min={0} max={59} value={attPolicy.breakLimitM}
+                      onChange={e => setAttPolicy(p => ({ ...p, breakLimitM: Math.max(0, Math.min(59, parseInt(e.target.value) || 0)) }))}
+                      style={{ width: '100%', background: VS.bg3, border: `1px solid ${VS.border2}`, borderRadius: 8, padding: '8px 32px 8px 12px', fontSize: 13, color: VS.text0, outline: 'none', boxSizing: 'border-box' }}
+                    />
+                    <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 11, color: VS.text2, pointerEvents: 'none' }}>m</span>
+                  </div>
+                </div>
+                <p style={{ fontSize: 11, color: VS.text2, marginTop: 6 }}>
+                  Break time beyond this limit will be shown as "Over Break" in the time logs.
+                </p>
+              </div>
+
+              {/* Breaks per day */}
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: VS.text2, marginBottom: 8 }}>
+                  Breaks Allowed Per Day
+                </label>
+                <input
+                  type="number" min={1} max={10} value={attPolicy.breakCountPerDay}
+                  onChange={e => setAttPolicy(p => ({ ...p, breakCountPerDay: Math.max(1, Math.min(10, parseInt(e.target.value) || 1)) }))}
+                  style={{ width: 100, background: VS.bg3, border: `1px solid ${VS.border2}`, borderRadius: 8, padding: '8px 12px', fontSize: 13, color: VS.text0, outline: 'none' }}
+                />
+                <p style={{ fontSize: 11, color: VS.text2, marginTop: 6 }}>
+                  Staff can take this many breaks per day before the Break button is disabled.
+                </p>
+              </div>
+
+              {attMsg && (
+                <p style={{ fontSize: 13, color: attMsg.type === 'success' ? VS.teal : VS.red }}>{attMsg.text}</p>
+              )}
+
+              <div>
+                <button
+                  onClick={async () => {
+                    if (!currentOrg?.id) return;
+                    setAttSaving(true); setAttMsg(null);
+                    try {
+                      const breakLimitSecs = attPolicy.breakLimitH * 3600 + attPolicy.breakLimitM * 60;
+                      await apiClient.fetch(`/api/attendance/policy?orgId=${currentOrg.id}`, {
+                        method: 'PUT',
+                        body: JSON.stringify({ breakLimitSecs, breakCountPerDay: attPolicy.breakCountPerDay }),
+                      });
+                      setAttMsg({ type: 'success', text: 'Break policy saved.' });
+                    } catch (e: any) {
+                      setAttMsg({ type: 'error', text: e.message || 'Failed to save.' });
+                    } finally {
+                      setAttSaving(false);
+                    }
+                  }}
+                  disabled={attSaving}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '9px 20px', background: VS.accent, border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, color: '#fff', cursor: attSaving ? 'not-allowed' : 'pointer', opacity: attSaving ? 0.7 : 1 }}
+                >
+                  <Save size={14} /> {attSaving ? 'Saving…' : 'Save Policy'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+
       default:
         return null;
     }

@@ -43,7 +43,7 @@ async function isAdminOrOwner(userId, orgId) {
     where: { userId, orgId },
     select: { role: true },
   });
-  return membership && ['OWNER', 'ADMIN'].includes(membership.role);
+  return membership && ['OWNER', 'ADMIN', 'HALL_OF_JUSTICE'].includes(membership.role);
 }
 
 // ── POST /api/apikeys — Generate a new API key ─────────────────────────────────

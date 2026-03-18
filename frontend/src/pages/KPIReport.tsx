@@ -97,11 +97,12 @@ function MiniBar({ value, color }: { value: number; color: string }) {
 }
 
 function Avatar({ name, image, size = 32 }: { name: string; image?: string; size?: number }) {
+  const [imgError, setImgError] = useState(false);
   const initials = name?.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() || '?';
   const palette = [VS.blue, VS.purple, VS.teal, VS.yellow, VS.orange, VS.accent];
   const ci = (name?.charCodeAt(0) ?? 0) % palette.length;
-  return image
-    ? <img src={image} alt={name} style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+  return image && !imgError
+    ? <img src={image} alt={name} onError={() => setImgError(true)} style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
     : <div style={{ width: size, height: size, borderRadius: '50%', background: palette[ci], display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.36, fontWeight: 700, color: '#fff', flexShrink: 0 }}>{initials}</div>;
 }
 

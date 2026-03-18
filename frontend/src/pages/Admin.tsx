@@ -17,7 +17,7 @@ interface OrgUser {
   createdAt: string;
   memberships: Array<{
     id: string;
-    role: 'OWNER' | 'ADMIN' | 'STAFF' | 'CLIENT';
+    role: 'OWNER' | 'ADMIN' | 'STAFF' | 'CLIENT' | 'HALL_OF_JUSTICE';
     org: { name: string; slug: string };
   }>;
   _count: { macroTasks: number };
@@ -26,7 +26,7 @@ interface OrgUser {
 interface Invite {
   id: string;
   email: string;
-  role: 'OWNER' | 'ADMIN' | 'STAFF' | 'CLIENT';
+  role: 'OWNER' | 'ADMIN' | 'STAFF' | 'CLIENT' | 'HALL_OF_JUSTICE';
   status: 'PENDING' | 'ACCEPTED' | 'EXPIRED' | 'REVOKED';
   createdAt: string;
   expiresAt: string;
@@ -35,10 +35,11 @@ interface Invite {
 
 // ── Role config ────────────────────────────────────────────────────────────────
 const ROLE_CFG: Record<string, { color: string; bg: string; icon: React.ElementType; label: string }> = {
-  OWNER: { color: VS.yellow,  bg: 'rgba(220,220,170,0.12)', icon: Crown,   label: 'Owner'  },
-  ADMIN: { color: VS.blue,    bg: 'rgba(86,156,214,0.12)',  icon: Shield,  label: 'Admin'  },
-  STAFF: { color: VS.teal,    bg: 'rgba(78,201,176,0.12)',  icon: UserCog, label: 'Staff'  },
-  CLIENT:{ color: VS.text2,   bg: 'rgba(144,144,144,0.12)', icon: Users,   label: 'Client' },
+  OWNER:           { color: VS.yellow,  bg: 'rgba(220,220,170,0.12)', icon: Crown,   label: 'Owner'          },
+  ADMIN:           { color: VS.blue,    bg: 'rgba(86,156,214,0.12)',  icon: Shield,  label: 'Admin'          },
+  STAFF:           { color: VS.teal,    bg: 'rgba(78,201,176,0.12)',  icon: UserCog, label: 'Staff'          },
+  CLIENT:          { color: VS.text2,   bg: 'rgba(144,144,144,0.12)', icon: Users,   label: 'Client'         },
+  HALL_OF_JUSTICE: { color: '#f59e0b',  bg: 'rgba(245,158,11,0.12)',  icon: Crown,   label: 'Hall of Justice' },
 };
 
 const inputCls = 'w-full px-3 py-2 rounded-lg text-[13px] focus:outline-none focus:ring-1 focus:ring-[#007acc]/50 transition-all';
@@ -55,12 +56,12 @@ export function Admin() {
   // Invite form
   const [showInvite, setShowInvite] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole]   = useState<'OWNER' | 'ADMIN' | 'STAFF' | 'CLIENT'>('STAFF');
+  const [inviteRole, setInviteRole]   = useState<'OWNER' | 'ADMIN' | 'STAFF' | 'CLIENT' | 'HALL_OF_JUSTICE'>('STAFF');
   const [inviting, setInviting]       = useState(false);
 
   // Edit role
   const [editingUser, setEditingUser] = useState<OrgUser | null>(null);
-  const [editingRole, setEditingRole] = useState<'OWNER' | 'ADMIN' | 'STAFF' | 'CLIENT'>('STAFF');
+  const [editingRole, setEditingRole] = useState<'OWNER' | 'ADMIN' | 'STAFF' | 'CLIENT' | 'HALL_OF_JUSTICE'>('STAFF');
   const [saving, setSaving]           = useState(false);
 
   // Remove member
@@ -74,7 +75,7 @@ export function Admin() {
   const [addName, setAddName]               = useState('');
   const [addEmail, setAddEmail]             = useState('');
   const [addPassword, setAddPassword]       = useState('');
-  const [addRole, setAddRole]               = useState<'OWNER' | 'ADMIN' | 'STAFF' | 'CLIENT'>('STAFF');
+  const [addRole, setAddRole]               = useState<'OWNER' | 'ADMIN' | 'STAFF' | 'CLIENT' | 'HALL_OF_JUSTICE'>('STAFF');
   const [showPassword, setShowPassword]     = useState(false);
   const [addingUser, setAddingUser]         = useState(false);
 
@@ -217,7 +218,7 @@ export function Admin() {
   // ── Permission helpers ──────────────────────────────────────────────────────
   const myRole         = users.find(u => u.id === session?.user?.id)?.memberships[0]?.role ?? 'STAFF';
   const isSuperAdmin   = session?.user?.email === 'admin@eversense.ai';
-  const canUseDangerZone = isSuperAdmin || myRole === 'OWNER';
+  const canUseDangerZone = isSuperAdmin || myRole === 'OWNER' || myRole === 'HALL_OF_JUSTICE';
 
   // ── Loading ──────────────────────────────────────────────────────────────────
   if (loading) {
@@ -343,7 +344,7 @@ export function Admin() {
           const cfg  = ROLE_CFG[role] ?? ROLE_CFG.CLIENT;
           const Icon = cfg.icon;
           const initials = (user.name || user.email).charAt(0).toUpperCase();
-          const isOwner = role === 'OWNER';
+          const isOwner = role === 'OWNER' || role === 'HALL_OF_JUSTICE';
           const isProtectedAdmin = user.email === 'admin@eversense.ai';
           // Caller can delete if: target not OWNER, not protected, and (caller is super admin/owner OR target is STAFF)
           const canDelete = !isProtectedAdmin && (isSuperAdmin || (!isOwner && (canUseDangerZone || role === 'STAFF')));
@@ -590,6 +591,7 @@ export function Admin() {
                   style={inputStyle}
                 >
                   <option value="OWNER">Owner — full organization control</option>
+                  <option value="HALL_OF_JUSTICE">Hall of Justice — owner-level access</option>
                   <option value="ADMIN">Admin — manage members &amp; settings</option>
                   <option value="STAFF">Staff — standard member</option>
                   <option value="CLIENT">Client — limited view access</option>
@@ -649,6 +651,7 @@ export function Admin() {
                   style={inputStyle}
                 >
                   <option value="OWNER">Owner — full organization control</option>
+                  <option value="HALL_OF_JUSTICE">Hall of Justice — owner-level access</option>
                   <option value="ADMIN">Admin — manage members &amp; settings</option>
                   <option value="STAFF">Staff — standard member</option>
                   <option value="CLIENT">Client — limited view access</option>
@@ -780,6 +783,7 @@ export function Admin() {
                   style={inputStyle}
                 >
                   <option value="OWNER">Owner — full organization control</option>
+                  <option value="HALL_OF_JUSTICE">Hall of Justice — owner-level access</option>
                   <option value="ADMIN">Admin — manage members &amp; settings</option>
                   <option value="STAFF">Staff — standard member</option>
                   <option value="CLIENT">Client — limited view access</option>

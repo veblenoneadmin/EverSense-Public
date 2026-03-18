@@ -34,7 +34,7 @@ interface Task {
   actualHours: number;
   dueDate?: string;
   assignee?: string;
-  assignees?: { id: string; name: string; email: string }[];
+  assignees?: { id: string; name: string; email: string; image?: string | null }[];
   project?: string;
   projectId?: string;
   isBillable: boolean;
@@ -42,6 +42,11 @@ interface Task {
   tags: string[];
   createdAt: string;
   updatedAt: string;
+  isTeamTask?: boolean;
+  mainAssigneeId?: string | null;
+  parentTaskId?: string | null;
+  checklistTotal?: number;
+  checklistDone?: number;
 }
 
 interface Project {
@@ -76,7 +81,7 @@ const PRIORITY_CONFIG: Record<string, { label: string; bg: string; text: string;
 };
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string }> = {
-  not_started: { label: 'Pending',     bg: 'rgba(86,156,214,0.15)',  text: VS.blue   },
+  not_started: { label: 'Not Started', bg: 'rgba(86,156,214,0.15)',  text: VS.blue   },
   in_progress: { label: 'In Progress', bg: 'rgba(220,220,170,0.15)', text: VS.yellow },
   on_hold:     { label: 'On Hold',     bg: 'rgba(244,71,71,0.15)',   text: VS.red    },
   completed:   { label: 'Done',        bg: 'rgba(78,201,176,0.15)',  text: VS.teal   },
@@ -109,6 +114,22 @@ function avatarGradient(name?: string) {
   return AVATAR_COLORS[idx];
 }
 
+function TaskAvatar({ name, email, image, size = 32 }: { name?: string; email?: string; image?: string | null; size?: number }) {
+  const [imgError, setImgError] = useState(false);
+  const label = name || email || '?';
+  if (image && !imgError) {
+    return <img src={image} alt={label} onError={() => setImgError(true)}
+      className="rounded-full ring-2 ring-[#2d2d2d] object-cover"
+      style={{ width: size, height: size, flexShrink: 0 }} />;
+  }
+  return (
+    <div className="rounded-full flex items-center justify-center font-bold text-white ring-2 ring-[#2d2d2d]"
+      style={{ width: size, height: size, fontSize: size * 0.31, background: avatarGradient(label), flexShrink: 0 }}>
+      {getInitials(label)}
+    </div>
+  );
+}
+
 // ── Input style shared ────────────────────────────────────────────────────────
 const inputCls = 'w-full px-3 py-2 rounded-lg text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-[#007acc]/50 transition-all';
 const inputStyle: React.CSSProperties = { background: '#3c3c3c', border: '1px solid #454545', color: '#d4d4d4' };
@@ -121,7 +142,7 @@ export function Tasks() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
-  const [userRole, setUserRole] = useState<string>('CLIENT');
+  const userRole = currentOrg?.role ?? 'CLIENT';
   const [searchTerm, setSearchTerm] = useState('');
 
   // Org members for assignee picker
@@ -133,6 +154,8 @@ export function Tasks() {
   const [newTaskForm, setNewTaskForm] = useState({
     title: '', description: '', priority: 'Medium' as Task['priority'],
     projectId: '', estimatedHours: 0, dueDate: '', tags: '', assigneeIds: [] as string[],
+    isTeamTask: false,
+    subTasks: [] as { assigneeId: string; title: string }[],
   });
   const [taskFormLoading, setTaskFormLoading] = useState(false);
 
@@ -160,6 +183,16 @@ export function Tasks() {
 
   // My tasks vs all tasks toggle (OWNER/ADMIN only)
   const isAdminOrOwner = currentOrg?.role === 'OWNER' || currentOrg?.role === 'ADMIN';
+
+  // Clock-in gate for STAFF
+  const [isClockedIn, setIsClockedIn] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!currentOrg?.id || isAdminOrOwner) { setIsClockedIn(true); return; }
+    fetch(`/api/attendance/status?orgId=${currentOrg.id}`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setIsClockedIn(d?.clockedIn ?? false))
+      .catch(() => setIsClockedIn(false));
+  }, [currentOrg?.id, isAdminOrOwner]);
   const [showAllTasks, setShowAllTasks] = useState(false);
 
   // Filter
@@ -173,7 +206,7 @@ export function Tasks() {
   const [showSort, setShowSort] = useState(false);
   const [sortBy, setSortBy] = useState<
     'created_desc' | 'created_asc' | 'priority_desc' | 'priority_asc' | 'due_asc' | 'due_desc' | 'title_asc' | 'title_desc'
-  >('created_desc');
+  >('priority_desc');
 
   // Timer — state is hydrated from localStorage so it survives refresh/restart
   const [timerTaskId, setTimerTaskId] = useState<string | null>(() => {
@@ -190,17 +223,6 @@ export function Tasks() {
   // Active timers from other users (admin view)
   const [activeTimers, setActiveTimers] = useState<{ userId: string; taskId: string; startedAt: number; name: string }[]>([]);
 
-  // ── fetch user role ────────────────────────────────────────────────────────
-  useEffect(() => {
-    const go = async () => {
-      if (!session?.user?.id) return;
-      try {
-        const d = await apiClient.fetch('/api/organizations');
-        if (d.organizations?.length > 0) setUserRole(d.organizations[0].role || 'CLIENT');
-      } catch { /* ignore */ }
-    };
-    if (session) go();
-  }, [session]);
 
   // ── fetch tasks ────────────────────────────────────────────────────────────
   const fetchTasks = async (showLoader = true) => {
@@ -499,11 +521,13 @@ export function Tasks() {
           estimatedHours: newTaskForm.estimatedHours,
           dueDate: newTaskForm.dueDate ? new Date(newTaskForm.dueDate + 'T00:00:00.000Z').toISOString() : undefined,
           tags: newTaskForm.tags ? newTaskForm.tags.split(',').map(t => t.trim()).filter(Boolean) : undefined,
+          isTeamTask: newTaskForm.isTeamTask || undefined,
+          subTasks: newTaskForm.isTeamTask ? newTaskForm.subTasks.filter(s => s.title && s.assigneeId) : undefined,
         }),
       });
       if (data.task) {
         await fetchTasks(false);
-        setNewTaskForm({ title: '', description: '', priority: 'Medium', projectId: '', estimatedHours: 0, dueDate: '', tags: '', assigneeIds: [] });
+        setNewTaskForm({ title: '', description: '', priority: 'Medium', projectId: '', estimatedHours: 0, dueDate: '', tags: '', assigneeIds: [], isTeamTask: false, subTasks: [] });
         setShowNewTaskForm(false);
       }
     } catch { alert('Failed to create task.'); }
@@ -569,11 +593,12 @@ export function Tasks() {
 
   const filtered = tasks
     .filter(t => {
-      if (searchTerm && !t.title.toLowerCase().includes(searchTerm.toLowerCase()) && !t.description.toLowerCase().includes(searchTerm.toLowerCase())) return false;
+      if (searchTerm && !t.title.toLowerCase().includes(searchTerm.toLowerCase()) && !(t.description ?? '').toLowerCase().includes(searchTerm.toLowerCase())) return false;
       if (filterPriorities.length > 0 && !filterPriorities.includes(t.priority)) return false;
       if (filterProject && t.projectId !== filterProject) return false;
       if (filterOverdueOnly) {
-        const over = t.dueDate && new Date(t.dueDate) < new Date() && t.status !== 'completed' && t.status !== 'cancelled';
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const over = t.dueDate && new Date(t.dueDate) < today && t.status !== 'completed' && t.status !== 'cancelled';
         if (!over) return false;
       }
       if (filterStaffId && !t.assignees?.some((a: { id: string }) => a.id === filterStaffId)) return false;
@@ -619,6 +644,48 @@ export function Tasks() {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2" style={{ borderColor: VS.accent }} />
+      </div>
+    );
+  }
+
+  // Block STAFF who haven't clocked in
+  if (isClockedIn === false && !isAdminOrOwner) {
+    return (
+      <div className="flex items-center justify-center h-full" style={{ minHeight: 'calc(100vh - 56px)' }}>
+        <div style={{
+          background: VS.bg1,
+          border: `1px solid ${VS.border}`,
+          borderRadius: 16,
+          padding: '48px 40px',
+          textAlign: 'center',
+          maxWidth: 400,
+        }}>
+          <div style={{
+            width: 64, height: 64, borderRadius: '50%',
+            background: `${VS.accent}20`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            margin: '0 auto 20px',
+          }}>
+            <Clock style={{ width: 28, height: 28, color: VS.accent }} />
+          </div>
+          <h2 style={{ fontSize: 18, fontWeight: 700, color: VS.text0, margin: '0 0 8px' }}>
+            Clock In Required
+          </h2>
+          <p style={{ fontSize: 13, color: VS.text2, margin: '0 0 24px', lineHeight: 1.6 }}>
+            You need to clock in before you can access the task board.
+          </p>
+          <a
+            href="/attendance"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8,
+              background: VS.accent, color: 'white',
+              padding: '10px 24px', borderRadius: 8,
+              fontSize: 13, fontWeight: 600, textDecoration: 'none',
+            }}
+          >
+            Go to Attendance
+          </a>
+        </div>
       </div>
     );
   }
@@ -1011,7 +1078,8 @@ export function Tasks() {
                   const sCfg = STATUS_CONFIG[task.status] || STATUS_CONFIG.not_started;
                   const isDragging = draggingId === task.id;
                   const date = formatDate(task.dueDate);
-                  const isOverdue = task.dueDate && new Date(task.dueDate) < new Date() && task.status !== 'completed' && task.status !== 'cancelled';
+                  const _today = new Date(); _today.setHours(0, 0, 0, 0);
+                  const isOverdue = task.dueDate && new Date(task.dueDate) < _today && task.status !== 'completed' && task.status !== 'cancelled';
                   return (
                     /*
                      * Wrapper: draggable, position:relative (no overflow so badge can bleed above).
@@ -1109,12 +1177,7 @@ export function Tasks() {
                                   <>
                                     {people.slice(0, 4).map((a, i) => (
                                       <div key={a.id || i} className="relative group/avatar">
-                                        <div
-                                          className="h-8 w-8 rounded-full flex items-center justify-center text-[10px] font-bold text-white ring-2 ring-[#2d2d2d]"
-                                          style={{ background: avatarGradient(a.name || a.email) }}
-                                        >
-                                          {getInitials(a.name || a.email)}
-                                        </div>
+                                        <TaskAvatar name={a.name} email={a.email} image={a.image} size={32} />
                                         <div
                                           className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 rounded-md text-[11px] whitespace-nowrap pointer-events-none opacity-0 group-hover/avatar:opacity-100 transition-opacity duration-150 z-50"
                                           style={{ background: VS.bg1, color: VS.text0, border: `1px solid ${VS.border}`, boxShadow: '0 4px 12px rgba(0,0,0,0.4)' }}
@@ -1136,12 +1199,21 @@ export function Tasks() {
                               })()}
                             </div>
 
-                            <span
-                              className="text-[11px] font-semibold px-3 py-1 rounded-full"
-                              style={{ background: sCfg.bg, color: sCfg.text, border: `1px solid ${sCfg.text}44` }}
-                            >
-                              {sCfg.label}
-                            </span>
+                            {col.id === 'not_started' && colTasks[0]?.id === task.id ? (
+                              <span
+                                className="text-[11px] font-semibold px-3 py-1 rounded-full"
+                                style={{ background: 'rgba(78,201,176,0.15)', color: '#4ec9b0', border: '1px solid #4ec9b044' }}
+                              >
+                                Up Next
+                              </span>
+                            ) : (
+                              <span
+                                className="text-[11px] font-semibold px-3 py-1 rounded-full"
+                                style={{ background: sCfg.bg, color: sCfg.text, border: `1px solid ${sCfg.text}44` }}
+                              >
+                                {sCfg.label}
+                              </span>
+                            )}
                           </div>
                         </div>
 
@@ -1257,6 +1329,24 @@ export function Tasks() {
                       >
                         {pCfg.label}
                       </div>
+
+
+                      {/* ── UP NEXT badge: shown on first To Do task while dragging ── */}
+                      {col.id === 'not_started' && draggingId !== null && colTasks.filter(t => t.id !== draggingId)[0]?.id === task.id && (
+                        <div
+                          className="absolute right-3 z-30 px-3 py-[3px] rounded-full text-[10px] font-bold tracking-widest whitespace-nowrap"
+                          style={{
+                            top: 0,
+                            transform: 'translateY(-50%)',
+                            background: 'linear-gradient(135deg,#0d2a1f,#0f3324)',
+                            color: '#4ec9b0',
+                            border: '1px solid #4ec9b099',
+                            boxShadow: '0 2px 8px #4ec9b040',
+                          }}
+                        >
+                          ↑ UP NEXT
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -1324,8 +1414,29 @@ export function Tasks() {
           >
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold" style={{ color: VS.text0 }}>New Task</h3>
-                <p className="text-[11px] mt-0.5" style={{ color: VS.text2 }}>
+                <div className="flex items-center gap-2 mb-1">
+                  <h3 className="text-sm font-bold" style={{ color: VS.text0 }}>New Task</h3>
+                  {userRole !== 'STAFF' && (
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <Users className="h-3 w-3" style={{ color: newTaskForm.isTeamTask ? VS.teal : VS.text2 }} />
+                      <span className="text-[11px] font-medium" style={{ color: newTaskForm.isTeamTask ? VS.teal : VS.text2 }}>Switch to Team Task</span>
+                      <div
+                        onClick={() => setNewTaskForm(p => ({ ...p, isTeamTask: !p.isTeamTask, subTasks: p.isTeamTask ? [] : [{ assigneeId: '', title: '' }], assigneeIds: [] }))}
+                        className="relative inline-flex h-4 w-7 items-center rounded-full transition-colors duration-200 cursor-pointer"
+                        style={{ background: newTaskForm.isTeamTask ? VS.teal : VS.bg3, border: `1px solid ${newTaskForm.isTeamTask ? VS.teal : VS.border}` }}
+                      >
+                        <span
+                          className="inline-block h-3 w-3 rounded-full transition-transform duration-200"
+                          style={{
+                            background: newTaskForm.isTeamTask ? '#fff' : VS.text2,
+                            transform: newTaskForm.isTeamTask ? 'translateX(14px)' : 'translateX(1px)',
+                          }}
+                        />
+                      </div>
+                    </label>
+                  )}
+                </div>
+                <p className="text-[11px]" style={{ color: VS.text2 }}>
                   Adding to{' '}
                   <span style={{ color: COLUMNS.find(c => c.id === newTaskColumnStatus)?.accent }}>
                     {COLUMNS.find(c => c.id === newTaskColumnStatus)?.label}
@@ -1366,7 +1477,7 @@ export function Tasks() {
                 />
               </div>
 
-              {userRole !== 'STAFF' && (
+              {userRole !== 'STAFF' && !newTaskForm.isTeamTask && (
               <div>
                 <label className="block text-[11px] font-semibold mb-1.5 uppercase tracking-wide" style={{ color: VS.text2 }}>
                   Assignees
@@ -1416,6 +1527,68 @@ export function Tasks() {
               </div>
               )}
 
+              {/* ── Team Task sub-tasks builder ── */}
+              {newTaskForm.isTeamTask && (
+                <div className="rounded-lg overflow-hidden" style={{ border: `1px solid ${VS.accent}44`, background: `${VS.accent}08` }}>
+                  <div className="px-3 py-2 flex items-center justify-between" style={{ borderBottom: `1px solid ${VS.accent}33` }}>
+                    <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: VS.accent }}>Sub-tasks</span>
+                    <span className="text-[10px]" style={{ color: VS.text2 }}>Each member gets this on their board</span>
+                  </div>
+                  <div className="p-3 space-y-2">
+                    {newTaskForm.subTasks.map((sub, idx) => {
+                      const m = orgMembers.find(x => x.id === sub.assigneeId);
+                      return (
+                        <div key={idx} className="flex items-center gap-2">
+                          <div className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
+                            style={{ background: m ? `${VS.blue}22` : VS.bg3, color: VS.blue }}>
+                            {m ? getInitials(m.name || m.email) : '?'}
+                          </div>
+                          <input
+                            type="text"
+                            placeholder="Sub-task title..."
+                            value={sub.title}
+                            onChange={e => setNewTaskForm(p => {
+                              const updated = [...p.subTasks];
+                              updated[idx] = { ...updated[idx], title: e.target.value };
+                              return { ...p, subTasks: updated };
+                            })}
+                            className={inputCls}
+                            style={{ ...inputStyle, flex: 1, fontSize: 12, padding: '5px 8px' }}
+                          />
+                          <select
+                            value={sub.assigneeId}
+                            onChange={e => setNewTaskForm(p => {
+                              const updated = [...p.subTasks];
+                              updated[idx] = { ...updated[idx], assigneeId: e.target.value };
+                              return { ...p, subTasks: updated };
+                            })}
+                            className={inputCls}
+                            style={{ ...inputStyle, width: 120, fontSize: 11, padding: '5px 6px' }}
+                          >
+                            <option value="">Assign...</option>
+                            {orgMembers.map(m2 => (
+                              <option key={m2.id} value={m2.id}>{m2.name || m2.email}</option>
+                            ))}
+                          </select>
+                          <button type="button" onClick={() => setNewTaskForm(p => ({ ...p, subTasks: p.subTasks.filter((_, i) => i !== idx) }))}
+                            style={{ color: VS.text2, background: 'none', border: 'none', cursor: 'pointer', padding: 2 }}>
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={() => setNewTaskForm(p => ({ ...p, subTasks: [...p.subTasks, { assigneeId: '', title: '' }] }))}
+                      className="flex items-center gap-1.5 text-[11px] font-medium px-2 py-1.5 rounded-lg transition-colors"
+                      style={{ color: VS.accent, border: `1px dashed ${VS.accent}55`, background: 'transparent', width: '100%', justifyContent: 'center' }}
+                    >
+                      <Plus className="h-3 w-3" /> Add sub-task
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] font-semibold mb-1.5 uppercase tracking-wide" style={{ color: VS.text2 }}>Priority</label>
@@ -1432,15 +1605,41 @@ export function Tasks() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[11px] font-semibold mb-1.5 uppercase tracking-wide" style={{ color: VS.text2 }}>Est. Hours</label>
-                  <input
-                    type="number"
-                    value={newTaskForm.estimatedHours}
-                    onChange={e => setNewTaskForm(p => ({ ...p, estimatedHours: parseFloat(e.target.value) || 0 }))}
-                    className={inputCls}
-                    style={inputStyle}
-                    min="0" step="0.5"
-                  />
+                  <label className="block text-[11px] font-semibold mb-1.5 uppercase tracking-wide" style={{ color: VS.text2 }}>Est. Time</label>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <div style={{ position: 'relative', flex: 1 }}>
+                      <input
+                        type="number"
+                        value={Math.floor(newTaskForm.estimatedHours)}
+                        onChange={e => {
+                          const h = Math.max(0, parseInt(e.target.value) || 0);
+                          const m = Math.round((newTaskForm.estimatedHours % 1) * 60);
+                          setNewTaskForm(p => ({ ...p, estimatedHours: h + m / 60 }));
+                        }}
+                        className={inputCls}
+                        style={{ ...inputStyle, paddingRight: 28 }}
+                        min="0"
+                        placeholder="0"
+                      />
+                      <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', fontSize: 11, color: VS.text2, pointerEvents: 'none' }}>h</span>
+                    </div>
+                    <div style={{ position: 'relative', flex: 1 }}>
+                      <input
+                        type="number"
+                        value={Math.round((newTaskForm.estimatedHours % 1) * 60)}
+                        onChange={e => {
+                          const m = Math.min(59, Math.max(0, parseInt(e.target.value) || 0));
+                          const h = Math.floor(newTaskForm.estimatedHours);
+                          setNewTaskForm(p => ({ ...p, estimatedHours: h + m / 60 }));
+                        }}
+                        className={inputCls}
+                        style={{ ...inputStyle, paddingRight: 28 }}
+                        min="0" max="59"
+                        placeholder="0"
+                      />
+                      <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', fontSize: 11, color: VS.text2, pointerEvents: 'none' }}>m</span>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -1638,15 +1837,41 @@ export function Tasks() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[11px] font-semibold mb-1.5 uppercase tracking-wide" style={{ color: VS.text2 }}>Est. Hours</label>
-                  <input
-                    type="number"
-                    value={editTaskForm.estimatedHours}
-                    onChange={e => setEditTaskForm(p => ({ ...p, estimatedHours: parseFloat(e.target.value) || 0 }))}
-                    className={inputCls}
-                    style={inputStyle}
-                    min="0" step="0.5"
-                  />
+                  <label className="block text-[11px] font-semibold mb-1.5 uppercase tracking-wide" style={{ color: VS.text2 }}>Est. Time</label>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <div style={{ position: 'relative', flex: 1 }}>
+                      <input
+                        type="number"
+                        value={Math.floor(editTaskForm.estimatedHours)}
+                        onChange={e => {
+                          const h = Math.max(0, parseInt(e.target.value) || 0);
+                          const m = Math.round((editTaskForm.estimatedHours % 1) * 60);
+                          setEditTaskForm(p => ({ ...p, estimatedHours: h + m / 60 }));
+                        }}
+                        className={inputCls}
+                        style={{ ...inputStyle, paddingRight: 28 }}
+                        min="0"
+                        placeholder="0"
+                      />
+                      <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', fontSize: 11, color: VS.text2, pointerEvents: 'none' }}>h</span>
+                    </div>
+                    <div style={{ position: 'relative', flex: 1 }}>
+                      <input
+                        type="number"
+                        value={Math.round((editTaskForm.estimatedHours % 1) * 60)}
+                        onChange={e => {
+                          const m = Math.min(59, Math.max(0, parseInt(e.target.value) || 0));
+                          const h = Math.floor(editTaskForm.estimatedHours);
+                          setEditTaskForm(p => ({ ...p, estimatedHours: h + m / 60 }));
+                        }}
+                        className={inputCls}
+                        style={{ ...inputStyle, paddingRight: 28 }}
+                        min="0" max="59"
+                        placeholder="0"
+                      />
+                      <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', fontSize: 11, color: VS.text2, pointerEvents: 'none' }}>m</span>
+                    </div>
+                  </div>
                 </div>
               </div>
 

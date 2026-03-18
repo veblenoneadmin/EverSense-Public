@@ -23,7 +23,7 @@ router.get('/', requireAuth, withOrgScope, async (req, res) => {
     const { projectId: filterProjectId, memberId, search, dateFrom, dateTo } = req.query;
 
     const role         = await getRole(userId, orgId);
-    const isPrivileged = role === 'OWNER' || role === 'ADMIN';
+    const isPrivileged = role === 'OWNER' || role === 'ADMIN' || role === 'HALL_OF_JUSTICE';
 
     // ── Fetch all reports for this org (or just this user) ───────────────────
     let sql    = `SELECT * FROM reports WHERE orgId = ?`;
@@ -101,7 +101,7 @@ router.get('/', requireAuth, withOrgScope, async (req, res) => {
     let members = [];
     if (isPrivileged) {
       const mRows = await prisma.membership.findMany({
-        where: { orgId, role: { in: ['OWNER', 'ADMIN', 'STAFF'] } },
+        where: { orgId, role: { in: ['OWNER', 'ADMIN', 'STAFF', 'HALL_OF_JUSTICE'] } },
         include: { user: { select: { id: true, name: true, email: true } } },
       });
       members = mRows.map(m => ({
@@ -193,7 +193,7 @@ router.delete('/:id', requireAuth, withOrgScope, async (req, res) => {
     const orgId  = req.orgId;
 
     const role         = await getRole(userId, orgId);
-    const isPrivileged = role === 'OWNER' || role === 'ADMIN';
+    const isPrivileged = role === 'OWNER' || role === 'ADMIN' || role === 'HALL_OF_JUSTICE';
 
     const checkSql = isPrivileged
       ? `SELECT id FROM reports WHERE id = ? AND orgId = ? LIMIT 1`

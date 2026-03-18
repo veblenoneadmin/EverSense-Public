@@ -224,7 +224,7 @@ router.get('/recent', requireAuth, withOrgScope, validateQuery(commonSchemas.pag
     console.log('[TimeLogs] membership:', { found: !!membership, role: membership?.role });
 
     const role = membership?.role || 'STAFF';
-    const isPrivileged = role === 'OWNER' || role === 'ADMIN';
+    const isPrivileged = role === 'OWNER' || role === 'ADMIN' || role === 'HALL_OF_JUSTICE';
 
     let entries;
 

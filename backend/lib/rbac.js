@@ -2,6 +2,7 @@ import { prisma } from './prisma.js';
 
 // Role hierarchy for permission checking
 export const RoleOrder = {
+  HALL_OF_JUSTICE: 5,
   OWNER: 4,
   ADMIN: 3,
   STAFF: 2,
@@ -101,11 +102,11 @@ export async function ensureUserHasOrganization(req, res, next) {
   }
 
   try {
-    // Check if user has any organizations
-    const memberships = await prisma.membership.findMany({
-      where: { userId: req.user.id },
-      include: { org: true }
-    });
+    // Check if user has any organizations (raw SQL to avoid collation mismatch)
+    const memberships = await prisma.$queryRawUnsafe(
+      'SELECT id FROM memberships WHERE userId = ? LIMIT 1',
+      req.user.id
+    );
 
     if (memberships.length === 0) {
       // Check if this is an internal admin user
@@ -254,8 +255,8 @@ export function canAssignRole(userRole, targetRole) {
   const userLevel = RoleOrder[userRole];
   const targetLevel = RoleOrder[targetRole];
 
-  // Only OWNER can assign OWNER role
-  if (targetRole === 'OWNER' && userRole !== 'OWNER') {
+  // Only OWNER or HALL_OF_JUSTICE can assign OWNER role
+  if (targetRole === 'OWNER' && userRole !== 'OWNER' && userRole !== 'HALL_OF_JUSTICE') {
     return false;
   }
 
@@ -287,38 +288,42 @@ export function canModifyMember(actorRole, targetRole, actorId, targetId) {
  */
 export async function getUserOrganizations(userId) {
   try {
-    const memberships = await prisma.membership.findMany({
-      where: { userId },
-      include: {
-        org: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            theme: true,
-            createdAt: true,
-            _count: {
-              select: { memberships: true }
-            }
-          }
-        }
-      },
-      orderBy: [
-        { role: 'desc' }, // OWNER first
-        { org: { name: 'asc' } }
-      ]
-    });
+    // Use raw SQL to avoid Prisma JOIN collation mismatch between memberships and organizations
+    const memberships = await prisma.$queryRawUnsafe(
+      'SELECT id, orgId, role FROM memberships WHERE userId = ? ORDER BY FIELD(role, "OWNER", "HALL_OF_JUSTICE", "ADMIN", "STAFF", "CLIENT") DESC',
+      userId
+    );
+    if (!memberships.length) return [];
 
-    return memberships.map(m => ({
-      id: m.org.id,
-      name: m.org.name,
-      slug: m.org.slug,
-      theme: m.org.theme ?? 'dark',
-      role: m.role,
-      memberCount: m.org._count.memberships,
-      createdAt: m.org.createdAt,
-      membershipId: m.id
-    }));
+    const orgIds = memberships.map(m => m.orgId);
+    const ph = orgIds.map(() => '?').join(',');
+    const orgs = await prisma.$queryRawUnsafe(
+      `SELECT o.id, o.name, o.slug, o.theme, o.createdAt, COUNT(m2.id) AS memberCount
+       FROM organizations o
+       LEFT JOIN memberships m2 ON m2.orgId = o.id
+       WHERE o.id IN (${ph})
+       GROUP BY o.id, o.name, o.slug, o.theme, o.createdAt`,
+      ...orgIds
+    );
+
+    const orgMap = {};
+    orgs.forEach(o => { orgMap[o.id] = o; });
+
+    return memberships
+      .filter(m => orgMap[m.orgId])
+      .map(m => {
+        const o = orgMap[m.orgId];
+        return {
+          id: o.id,
+          name: o.name,
+          slug: o.slug,
+          theme: o.theme ?? 'dark',
+          role: m.role,
+          memberCount: Number(o.memberCount),
+          createdAt: o.createdAt,
+          membershipId: m.id,
+        };
+      });
   } catch (error) {
     console.error('getUserOrganizations error:', error);
     return [];
@@ -348,7 +353,7 @@ export function generateOrgSlug(name) {
 }
 
 /**
- * Middleware for organization owners only
+ * Middleware for organization owners only (also accepts HALL_OF_JUSTICE)
  */
 export const requireOwner = requireRole('OWNER');
 

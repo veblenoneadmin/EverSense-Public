@@ -53,8 +53,8 @@ const LATEST_TRANSCRIPTS_QUERY = `
  * @param {string} meetingId — the Fireflies transcript/meeting ID
  * @returns {object|null} transcript object or null on error
  */
-export async function fetchTranscript(meetingId) {
-  const apiKey = process.env.FIREFLIES_API_KEY;
+export async function fetchTranscript(meetingId, apiKey = null) {
+  apiKey = apiKey || process.env.FIREFLIES_API_KEY;
   if (!apiKey) {
     console.warn('[Fireflies] FIREFLIES_API_KEY not set — skipping');
     return null;
@@ -92,8 +92,8 @@ export async function fetchTranscript(meetingId) {
  * Fetch raw Fireflies API response for a transcript (for debugging).
  * Returns the full unparsed JSON so we can see exactly what the API gives us.
  */
-export async function fetchTranscriptRaw(meetingId) {
-  const apiKey = process.env.FIREFLIES_API_KEY;
+export async function fetchTranscriptRaw(meetingId, apiKey = null) {
+  apiKey = apiKey || process.env.FIREFLIES_API_KEY;
   if (!apiKey) return { error: 'FIREFLIES_API_KEY not set' };
 
   const res = await fetch(FIREFLIES_API, {
@@ -111,8 +111,8 @@ export async function fetchTranscriptRaw(meetingId) {
   return res.json();
 }
 
-export async function fetchLatestTranscripts() {
-  const apiKey = process.env.FIREFLIES_API_KEY;
+export async function fetchLatestTranscripts(apiKey = null) {
+  apiKey = apiKey || process.env.FIREFLIES_API_KEY;
   if (!apiKey) {
     console.warn('[Fireflies] FIREFLIES_API_KEY not set — skipping poll');
     return [];
