@@ -25,7 +25,17 @@ function buildDatabaseUrl() {
     return url;
   }
 
-  return process.env.DATABASE_URL || process.env.VITE_DATABASE_URL;
+  // Railway provides MYSQL_URL (internal) — already properly encoded
+  if (process.env.MYSQL_URL) {
+    console.log('🔗 Using MYSQL_URL from Railway');
+    return process.env.MYSQL_URL;
+  }
+
+  if (process.env.DATABASE_URL) {
+    return process.env.DATABASE_URL;
+  }
+
+  return process.env.VITE_DATABASE_URL;
 }
 
 const dbUrl = buildDatabaseUrl();
