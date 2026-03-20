@@ -112,8 +112,11 @@ export function Dashboard() {
 
   // ── Daily task focus popup ─────────────────────────────────────────────────
   const [showFocusPopup, setShowFocusPopup] = useState(false);
-  const [focusTask, setFocusTask] = useState('');
+  const [focusSelected, setFocusSelected] = useState<string[]>([]);
   const [focusSearch, setFocusSearch] = useState('');
+  const [focusCreating, setFocusCreating] = useState(false);
+  const [focusNewTask, setFocusNewTask] = useState('');
+  const [focusDone, setFocusDone] = useState(false);
 
   // ── Attendance state ───────────────────────────────────────────────────────
   const [attendanceActive, setAttendanceActive] = useState<{ id: string; timeIn: string } | null>(null);
@@ -396,6 +399,30 @@ export function Dashboard() {
     (focusSearch === '' || t.title?.toLowerCase().includes(focusSearch.toLowerCase()))
   ).slice(0, 8);
 
+  const toggleFocusTask = (title: string) => {
+    setFocusSelected(prev =>
+      prev.includes(title) ? prev.filter(t => t !== title) : [...prev, title]
+    );
+  };
+
+  const handleCreateFocusTask = async () => {
+    if (!focusNewTask.trim() || !currentOrg?.id) return;
+    try {
+      const res = await fetch('/api/tasks', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: focusNewTask.trim(), orgId: currentOrg.id, status: 'not_started' }),
+      });
+      if (res.ok) {
+        setFocusSelected(prev => [...prev, focusNewTask.trim()]);
+        setFocusNewTask('');
+        setFocusCreating(false);
+        fetchDashboard();
+      }
+    } catch { /* ignore */ }
+  };
+
   return (
     <div className="space-y-6">
 
@@ -403,55 +430,101 @@ export function Dashboard() {
       {showFocusPopup && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}>
           <div className="w-full max-w-md rounded-xl p-6 shadow-2xl" style={{ backgroundColor: VS.bg1, border: `1px solid ${VS.border}` }}>
-            <h2 className="text-lg font-semibold mb-1" style={{ color: VS.text0 }}>What are you working on today?</h2>
-            <p className="text-[12px] mb-4" style={{ color: VS.text2 }}>Pick a task or type what you're focusing on</p>
 
-            <input
-              type="text"
-              placeholder="Search or type your focus..."
-              value={focusSearch}
-              onChange={e => { setFocusSearch(e.target.value); setFocusTask(e.target.value); }}
-              className="w-full px-3 py-2 rounded-lg text-[13px] mb-3 outline-none"
-              style={{ backgroundColor: VS.bg2, border: `1px solid ${VS.border}`, color: VS.text0 }}
-              autoFocus
-            />
+            {!focusDone ? (
+              <>
+                <h2 className="text-lg font-semibold mb-1" style={{ color: VS.text0 }}>What are you working on today?</h2>
+                <p className="text-[12px] mb-4" style={{ color: VS.text2 }}>Select one or more tasks</p>
 
-            {filteredFocusTasks.length > 0 && (
-              <div className="space-y-1 mb-4 max-h-48 overflow-y-auto">
-                {filteredFocusTasks.map(t => (
+                <input
+                  type="text"
+                  placeholder="Search tasks..."
+                  value={focusSearch}
+                  onChange={e => setFocusSearch(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg text-[13px] mb-3 outline-none"
+                  style={{ backgroundColor: VS.bg2, border: `1px solid ${VS.border}`, color: VS.text0 }}
+                  autoFocus
+                />
+
+                {filteredFocusTasks.length > 0 && (
+                  <div className="space-y-1 mb-3 max-h-48 overflow-y-auto">
+                    {filteredFocusTasks.map(t => {
+                      const selected = focusSelected.includes(t.title);
+                      return (
+                        <button
+                          key={t.id}
+                          onClick={() => toggleFocusTask(t.title)}
+                          className="w-full text-left px-3 py-2 rounded-lg text-[13px] transition-colors flex items-center gap-2"
+                          style={{
+                            backgroundColor: selected ? `${VS.accent}20` : VS.bg2,
+                            border: `1px solid ${selected ? VS.accent : VS.border}`,
+                            color: selected ? VS.accent : VS.text1,
+                          }}
+                        >
+                          <span className="w-4 h-4 rounded flex items-center justify-center shrink-0" style={{ border: `1.5px solid ${selected ? VS.accent : VS.text2}`, backgroundColor: selected ? VS.accent : 'transparent' }}>
+                            {selected && <span style={{ color: '#fff', fontSize: 10, fontWeight: 700 }}>✓</span>}
+                          </span>
+                          {t.title}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {focusCreating ? (
+                  <div className="flex gap-2 mb-3">
+                    <input
+                      type="text"
+                      placeholder="New task title..."
+                      value={focusNewTask}
+                      onChange={e => setFocusNewTask(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleCreateFocusTask()}
+                      className="flex-1 px-3 py-2 rounded-lg text-[13px] outline-none"
+                      style={{ backgroundColor: VS.bg2, border: `1px solid ${VS.accent}`, color: VS.text0 }}
+                      autoFocus
+                    />
+                    <button onClick={handleCreateFocusTask} className="px-3 py-2 rounded-lg text-[13px] font-medium" style={{ backgroundColor: VS.accent, color: '#fff' }}>Add</button>
+                    <button onClick={() => { setFocusCreating(false); setFocusNewTask(''); }} className="px-3 py-2 rounded-lg text-[13px]" style={{ backgroundColor: VS.bg2, color: VS.text2, border: `1px solid ${VS.border}` }}>✕</button>
+                  </div>
+                ) : (
                   <button
-                    key={t.id}
-                    onClick={() => setFocusTask(t.title)}
-                    className="w-full text-left px-3 py-2 rounded-lg text-[13px] transition-colors"
-                    style={{
-                      backgroundColor: focusTask === t.title ? `${VS.accent}20` : VS.bg2,
-                      border: `1px solid ${focusTask === t.title ? VS.accent : VS.border}`,
-                      color: focusTask === t.title ? VS.accent : VS.text1,
-                    }}
+                    onClick={() => setFocusCreating(true)}
+                    className="w-full px-3 py-2 rounded-lg text-[13px] mb-3 text-left"
+                    style={{ backgroundColor: VS.bg2, border: `1px dashed ${VS.border}`, color: VS.text2 }}
                   >
-                    {t.title}
+                    + Create task
                   </button>
-                ))}
-              </div>
-            )}
+                )}
 
-            <div className="flex gap-2 mt-2">
-              <button
-                onClick={() => setShowFocusPopup(false)}
-                className="flex-1 px-4 py-2 rounded-lg text-[13px]"
-                style={{ backgroundColor: VS.bg2, color: VS.text2, border: `1px solid ${VS.border}` }}
-              >
-                Skip
-              </button>
-              <button
-                onClick={() => setShowFocusPopup(false)}
-                className="flex-1 px-4 py-2 rounded-lg text-[13px] font-medium"
-                style={{ backgroundColor: VS.accent, color: '#fff' }}
-                disabled={!focusTask}
-              >
-                Let's go!
-              </button>
-            </div>
+                <button
+                  onClick={() => setFocusDone(true)}
+                  className="w-full px-4 py-2 rounded-lg text-[13px] font-medium"
+                  style={{ backgroundColor: focusSelected.length > 0 ? VS.accent : VS.bg2, color: focusSelected.length > 0 ? '#fff' : VS.text2, border: `1px solid ${focusSelected.length > 0 ? VS.accent : VS.border}` }}
+                  disabled={focusSelected.length === 0}
+                >
+                  Let's go! {focusSelected.length > 0 && `(${focusSelected.length} selected)`}
+                </button>
+              </>
+            ) : (
+              <>
+                <h2 className="text-lg font-semibold mb-1" style={{ color: VS.text0 }}>Today's focus</h2>
+                <p className="text-[12px] mb-4" style={{ color: VS.text2 }}>You're working on {focusSelected.length} task{focusSelected.length > 1 ? 's' : ''} today</p>
+                <div className="space-y-2 mb-5">
+                  {focusSelected.map((title, i) => (
+                    <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-lg text-[13px]" style={{ backgroundColor: `${VS.accent}15`, border: `1px solid ${VS.accent}40`, color: VS.text0 }}>
+                      <span style={{ color: VS.accent }}>✓</span> {title}
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={() => setShowFocusPopup(false)}
+                  className="w-full px-4 py-2 rounded-lg text-[13px] font-medium"
+                  style={{ backgroundColor: VS.accent, color: '#fff' }}
+                >
+                  Start working
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
