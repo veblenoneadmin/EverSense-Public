@@ -1,10 +1,3 @@
-import { config } from 'dotenv';
-import { fileURLToPath as _fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-const __filename = _fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-config({ path: join(__dirname, '.env') });
-
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';

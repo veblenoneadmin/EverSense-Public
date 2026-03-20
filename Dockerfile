@@ -31,4 +31,4 @@ RUN npm run build
 EXPOSE 3001
 
 # Attempt DB sync (non-blocking) then start — prisma generate already done at build time
-CMD ["sh", "-c", "cd backend && (npx prisma db push --skip-generate || echo 'DB sync failed, continuing...') && node server.js"]
+CMD ["sh", "-c", "cd backend && (npx prisma db push --skip-generate --accept-data-loss || echo 'DB sync failed, continuing...') && node server.js"]
