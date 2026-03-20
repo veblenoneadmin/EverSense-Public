@@ -22,7 +22,7 @@ COPY backend/ ./backend/
 RUN rm -f frontend/node_modules/.tmp/tsconfig.app.tsbuildinfo
 
 # Cache bust - increment to force clean rebuild
-ARG CACHE_BUST=5
+ARG CACHE_BUST=6
 
 # Build the application (frontend build)
 RUN npm run build
