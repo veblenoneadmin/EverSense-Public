@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { useSession } from '../../lib/auth-client';
+import { useSession, authClient } from '../../lib/auth-client';
 import Sidebar from './Sidebar';
 import { LogOut, ChevronDown, Bell, CheckCheck, X, CheckSquare, AlertTriangle, Clock, CalendarDays, Users, Video, Info, Menu, ArrowLeft, ExternalLink } from 'lucide-react';
 import { useSSE } from '../../hooks/useSSE';
@@ -175,19 +175,20 @@ const MainLayout: React.FC = () => {
   }, [attendanceActive, navOnBreak]);
 
   const handleSignOut = async () => {
-    try {
-      await fetch('/api/auth/sign-out', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
-    } catch (error) {
-      console.error('Logout error:', error);
-    } finally {
-      localStorage.clear();
-      sessionStorage.clear();
-      window.location.replace('/login');
-    }
+    await authClient.signOut({
+      fetchOptions: {
+        onSuccess: () => {
+          localStorage.clear();
+          sessionStorage.clear();
+          window.location.replace('/login');
+        },
+        onError: () => {
+          localStorage.clear();
+          sessionStorage.clear();
+          window.location.replace('/login');
+        },
+      },
+    });
   };
 
   const getInitials = (name: string) =>
