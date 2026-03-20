@@ -43,6 +43,7 @@ export const auth = betterAuth({
     'https://vebtaskrevamp-production.up.railway.app',
     'https://eversense-ai.up.railway.app',
     'https://eversense-public-production.up.railway.app',
+    'https://eversense.up.railway.app',
     ...(process.env.BETTER_AUTH_URL ? [process.env.BETTER_AUTH_URL] : []),
     ...(process.env.APP_URL ? [process.env.APP_URL] : []),
   ],
