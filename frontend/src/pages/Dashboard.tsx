@@ -453,7 +453,7 @@ export function Dashboard() {
                 )}
 
                 <button
-                  onClick={() => { setShowFocusPopup(false); navigate('/tasks?create=1'); }}
+                  onClick={() => { localStorage.setItem('open_create_task', '1'); setShowFocusPopup(false); navigate('/tasks'); }}
                   className="w-full px-3 py-2 rounded-lg text-[13px] mb-3 text-left"
                   style={{ backgroundColor: VS.bg2, border: `1px dashed ${VS.border}`, color: VS.text2 }}
                 >
