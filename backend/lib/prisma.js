@@ -9,7 +9,26 @@ config({ path: join(__dirname, '../.env') });
 
 const globalForPrisma = globalThis;
 
-const dbUrl = process.env.DATABASE_URL || process.env.VITE_DATABASE_URL;
+// Build URL from individual components if available (avoids special-char encoding issues)
+function buildDatabaseUrl() {
+  const host     = process.env.MYSQLHOST     || process.env.MYSQL_HOST;
+  const port     = process.env.MYSQLPORT     || process.env.MYSQL_PORT     || '3306';
+  const user     = process.env.MYSQLUSER     || process.env.MYSQL_USER;
+  const password = process.env.MYSQLPASSWORD || process.env.MYSQL_PASSWORD;
+  const database = process.env.MYSQLDATABASE || process.env.MYSQL_DATABASE;
+
+  if (host && user && password && database) {
+    const encodedPassword = encodeURIComponent(password);
+    const encodedUser     = encodeURIComponent(user);
+    const url = `mysql://${encodedUser}:${encodedPassword}@${host}:${port}/${database}`;
+    console.log('🔗 Built DATABASE_URL from MYSQL_* components');
+    return url;
+  }
+
+  return process.env.DATABASE_URL || process.env.VITE_DATABASE_URL;
+}
+
+const dbUrl = buildDatabaseUrl();
 
 console.log('🔗 Initializing Prisma client...');
 console.log('📍 Database URL configured:', !!dbUrl);
