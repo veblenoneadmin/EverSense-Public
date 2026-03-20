@@ -6,6 +6,7 @@ import { useSession } from '../lib/auth-client';
 import { useOrganization } from '../contexts/OrganizationContext';
 import { ClientDashboard } from './ClientDashboard';
 import { EverSenseLogo } from '../components/EverSenseLogo';
+import { CreateTaskModal } from '../components/CreateTaskModal';
 import {
   Clock, LogIn, LogOut, CheckCircle2, Timer, AlertTriangle,
   FolderOpen, Users, TrendingUp, TrendingDown, Minus,
@@ -115,6 +116,7 @@ export function Dashboard() {
   const [focusSelected, setFocusSelected] = useState<string[]>([]);
   const [focusSearch, setFocusSearch] = useState('');
   const [focusDone, setFocusDone] = useState(false);
+  const [showCreateTask, setShowCreateTask] = useState(false);
 
   // ── Attendance state ───────────────────────────────────────────────────────
   const [attendanceActive, setAttendanceActive] = useState<{ id: string; timeIn: string } | null>(null);
@@ -441,8 +443,16 @@ export function Dashboard() {
                     })}
                   </div>
                 ) : (
-                  <p className="text-[12px] mb-4 text-center py-4" style={{ color: VS.text2 }}>No active tasks found</p>
+                  <p className="text-[12px] mb-3 text-center py-4" style={{ color: VS.text2 }}>No active tasks found</p>
                 )}
+
+                <button
+                  onClick={() => setShowCreateTask(true)}
+                  className="w-full px-3 py-2 rounded-lg text-[13px] mb-3 text-left"
+                  style={{ backgroundColor: VS.bg2, border: `1px dashed ${VS.border}`, color: VS.text2 }}
+                >
+                  + Add new task
+                </button>
 
                 <div className="flex gap-2">
                   <button
@@ -485,6 +495,19 @@ export function Dashboard() {
           </div>
         </div>
       )}
+
+      <CreateTaskModal
+        isOpen={showCreateTask}
+        onClose={() => setShowCreateTask(false)}
+        onTaskCreated={(title) => {
+          setFocusSelected(prev => [...prev, title]);
+          setShowCreateTask(false);
+          fetchDashboard();
+        }}
+        orgId={currentOrg?.id ?? ''}
+        userId={session?.user?.id ?? ''}
+        userRole={currentOrg?.role ?? ''}
+      />
 
       {/* ── Page header ── */}
       <div className="flex flex-wrap items-start justify-between gap-3">
