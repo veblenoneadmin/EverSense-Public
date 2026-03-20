@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { useSession, authSignOut } from '../../lib/auth-client';
+import { useSession } from '../../lib/auth-client';
 import Sidebar from './Sidebar';
 import { LogOut, ChevronDown, Bell, CheckCheck, X, CheckSquare, AlertTriangle, Clock, CalendarDays, Users, Video, Info, Menu, ArrowLeft, ExternalLink } from 'lucide-react';
 import { useSSE } from '../../hooks/useSSE';
