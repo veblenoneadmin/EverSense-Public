@@ -176,13 +176,17 @@ const MainLayout: React.FC = () => {
 
   const handleSignOut = async () => {
     try {
-      await authSignOut();
-      // Redirect to login after logout
-      window.location.href = '/login';
+      await fetch('/api/auth/sign-out', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
     } catch (error) {
       console.error('Logout error:', error);
-      // Redirect anyway even if there's an error
-      window.location.href = '/login';
+    } finally {
+      localStorage.clear();
+      sessionStorage.clear();
+      window.location.replace('/login');
     }
   };
 
