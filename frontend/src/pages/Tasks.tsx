@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useSession } from '../lib/auth-client';
 import { useApiClient } from '../lib/api-client';
 import { useOrganization } from '../contexts/OrganizationContext';
@@ -149,7 +150,15 @@ export function Tasks() {
   const [orgMembers, setOrgMembers] = useState<OrgMember[]>([]);
 
   // New task form
-  const [showNewTaskForm, setShowNewTaskForm] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [showNewTaskForm, setShowNewTaskForm] = useState(() => searchParams.get('create') === '1');
+
+  useEffect(() => {
+    if (searchParams.get('create') === '1') {
+      setShowNewTaskForm(true);
+      setSearchParams({}, { replace: true });
+    }
+  }, []);
   const [newTaskColumnStatus, setNewTaskColumnStatus] = useState<Task['status']>('not_started');
   const [newTaskForm, setNewTaskForm] = useState({
     title: '', description: '', priority: 'Medium' as Task['priority'],
