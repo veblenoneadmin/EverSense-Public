@@ -648,50 +648,44 @@ export function Tasks() {
     );
   }
 
-  // Block STAFF who haven't clocked in
-  if (isClockedIn === false && !isAdminOrOwner) {
-    return (
-      <div className="flex items-center justify-center h-full" style={{ minHeight: 'calc(100vh - 56px)' }}>
-        <div style={{
-          background: VS.bg1,
-          border: `1px solid ${VS.border}`,
-          borderRadius: 16,
-          padding: '48px 40px',
-          textAlign: 'center',
-          maxWidth: 400,
-        }}>
-          <div style={{
-            width: 64, height: 64, borderRadius: '50%',
-            background: `${VS.accent}20`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            margin: '0 auto 20px',
-          }}>
-            <Clock style={{ width: 28, height: 28, color: VS.accent }} />
-          </div>
-          <h2 style={{ fontSize: 18, fontWeight: 700, color: VS.text0, margin: '0 0 8px' }}>
-            Clock In Required
-          </h2>
-          <p style={{ fontSize: 13, color: VS.text2, margin: '0 0 24px', lineHeight: 1.6 }}>
-            You need to clock in before you can access the task board.
-          </p>
-          <a
-            href="/attendance"
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 8,
-              background: VS.accent, color: 'white',
-              padding: '10px 24px', borderRadius: 8,
-              fontSize: 13, fontWeight: 600, textDecoration: 'none',
-            }}
-          >
-            Go to Attendance
-          </a>
-        </div>
-      </div>
-    );
-  }
+  const isLocked = isClockedIn === false && !isAdminOrOwner;
 
   return (
-    <div className="flex flex-col h-full" style={{ minHeight: 'calc(100vh - 56px)' }}>
+    <div className="flex flex-col h-full" style={{ minHeight: 'calc(100vh - 56px)', position: 'relative' }}>
+
+      {/* ── Clock-in lock overlay ── */}
+      {isLocked && (
+        <div style={{
+          position: 'absolute', inset: 0, zIndex: 40,
+          backgroundColor: 'rgba(0,0,0,0.5)',
+          backdropFilter: 'blur(2px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          pointerEvents: 'all',
+        }}>
+          <div style={{
+            background: VS.bg1, border: `1px solid ${VS.border}`,
+            borderRadius: 16, padding: '40px 36px', textAlign: 'center', maxWidth: 360,
+          }}>
+            <div style={{
+              width: 56, height: 56, borderRadius: '50%', background: `${VS.accent}20`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px',
+            }}>
+              <Clock style={{ width: 24, height: 24, color: VS.accent }} />
+            </div>
+            <h2 style={{ fontSize: 16, fontWeight: 700, color: VS.text0, margin: '0 0 8px' }}>Clock In to Start Working</h2>
+            <p style={{ fontSize: 12, color: VS.text2, margin: '0 0 20px', lineHeight: 1.6 }}>
+              You can view the task board but need to clock in to make changes.
+            </p>
+            <a href="/attendance" style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8,
+              background: VS.accent, color: 'white',
+              padding: '9px 20px', borderRadius: 8, fontSize: 13, fontWeight: 600, textDecoration: 'none',
+            }}>
+              Go to Attendance
+            </a>
+          </div>
+        </div>
+      )}
 
       {/* ── Top header bar ── */}
       <div
