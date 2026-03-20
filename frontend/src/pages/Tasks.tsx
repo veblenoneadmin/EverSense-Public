@@ -149,11 +149,7 @@ export function Tasks() {
   const [orgMembers, setOrgMembers] = useState<OrgMember[]>([]);
 
   // New task form
-  const [showNewTaskForm, setShowNewTaskForm] = useState(() => {
-    const flag = localStorage.getItem('open_create_task');
-    if (flag === '1') { localStorage.removeItem('open_create_task'); return true; }
-    return false;
-  });
+  const [showNewTaskForm, setShowNewTaskForm] = useState(false);
   const [newTaskColumnStatus, setNewTaskColumnStatus] = useState<Task['status']>('not_started');
   const [newTaskForm, setNewTaskForm] = useState({
     title: '', description: '', priority: 'Medium' as Task['priority'],

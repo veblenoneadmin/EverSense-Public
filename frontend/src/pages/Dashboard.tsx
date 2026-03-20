@@ -110,12 +110,6 @@ export function Dashboard() {
   const [tasks, setTasks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // ── Daily task focus popup ─────────────────────────────────────────────────
-  const [showFocusPopup, setShowFocusPopup] = useState(false);
-  const [focusSelected, setFocusSelected] = useState<string[]>([]);
-  const [focusSearch, setFocusSearch] = useState('');
-  const [focusDone, setFocusDone] = useState(false);
-
   // ── Attendance state ───────────────────────────────────────────────────────
   const [attendanceActive, setAttendanceActive] = useState<{ id: string; timeIn: string } | null>(null);
   const [attendanceElapsed, setAttendanceElapsed] = useState(0);
@@ -198,15 +192,6 @@ export function Dashboard() {
   }, [session?.user?.id, currentOrg?.id]);
 
   useEffect(() => { fetchDashboard(); }, [fetchDashboard]);
-
-  useEffect(() => {
-    const today = new Date().toISOString().slice(0, 10);
-    const lastShown = localStorage.getItem('focus_popup_date');
-    if (lastShown !== today && !loading && tasks.length >= 0 && session?.user?.id) {
-      setShowFocusPopup(true);
-      localStorage.setItem('focus_popup_date', today);
-    }
-  }, [loading, session?.user?.id]);
 
   // ── Re-fetch attendance when cron auto-clocks out (SSE or window event) ───
   const fetchAttendance = useCallback(async () => {
@@ -392,106 +377,8 @@ export function Dashboard() {
     );
   }
 
-  const filteredFocusTasks = tasks.filter(t =>
-    t.status !== 'completed' && t.status !== 'cancelled' &&
-    (focusSearch === '' || t.title?.toLowerCase().includes(focusSearch.toLowerCase()))
-  ).slice(0, 8);
-
-  const toggleFocusTask = (title: string) => {
-    setFocusSelected(prev =>
-      prev.includes(title) ? prev.filter(t => t !== title) : [...prev, title]
-    );
-  };
-
-
   return (
     <div className="space-y-6">
-
-      {/* ── Daily focus popup ── */}
-      {showFocusPopup && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}>
-          <div className="w-full max-w-md rounded-xl p-6 shadow-2xl" style={{ backgroundColor: VS.bg1, border: `1px solid ${VS.border}` }}>
-
-            {!focusDone ? (
-              <>
-                <h2 className="text-lg font-semibold mb-1" style={{ color: VS.text0 }}>What are you working on today?</h2>
-                <p className="text-[12px] mb-4" style={{ color: VS.text2 }}>Select one or more tasks</p>
-
-                <input
-                  type="text"
-                  placeholder="Search tasks..."
-                  value={focusSearch}
-                  onChange={e => setFocusSearch(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg text-[13px] mb-3 outline-none"
-                  style={{ backgroundColor: VS.bg2, border: `1px solid ${VS.border}`, color: VS.text0 }}
-                  autoFocus
-                />
-
-                {filteredFocusTasks.length > 0 && (
-                  <div className="space-y-1 mb-3 max-h-48 overflow-y-auto">
-                    {filteredFocusTasks.map(t => {
-                      const selected = focusSelected.includes(t.title);
-                      return (
-                        <button
-                          key={t.id}
-                          onClick={() => toggleFocusTask(t.title)}
-                          className="w-full text-left px-3 py-2 rounded-lg text-[13px] transition-colors flex items-center gap-2"
-                          style={{
-                            backgroundColor: selected ? `${VS.accent}20` : VS.bg2,
-                            border: `1px solid ${selected ? VS.accent : VS.border}`,
-                            color: selected ? VS.accent : VS.text1,
-                          }}
-                        >
-                          <span className="w-4 h-4 rounded flex items-center justify-center shrink-0" style={{ border: `1.5px solid ${selected ? VS.accent : VS.text2}`, backgroundColor: selected ? VS.accent : 'transparent' }}>
-                            {selected && <span style={{ color: '#fff', fontSize: 10, fontWeight: 700 }}>✓</span>}
-                          </span>
-                          {t.title}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-
-                <button
-                  onClick={() => { localStorage.setItem('open_create_task', '1'); setShowFocusPopup(false); navigate('/tasks'); }}
-                  className="w-full px-3 py-2 rounded-lg text-[13px] mb-3 text-left"
-                  style={{ backgroundColor: VS.bg2, border: `1px dashed ${VS.border}`, color: VS.text2 }}
-                >
-                  + Create task
-                </button>
-
-                <button
-                  onClick={() => setFocusDone(true)}
-                  className="w-full px-4 py-2 rounded-lg text-[13px] font-medium"
-                  style={{ backgroundColor: focusSelected.length > 0 ? VS.accent : VS.bg2, color: focusSelected.length > 0 ? '#fff' : VS.text2, border: `1px solid ${focusSelected.length > 0 ? VS.accent : VS.border}` }}
-                  disabled={focusSelected.length === 0}
-                >
-                  Let's go! {focusSelected.length > 0 && `(${focusSelected.length} selected)`}
-                </button>
-              </>
-            ) : (
-              <>
-                <h2 className="text-lg font-semibold mb-1" style={{ color: VS.text0 }}>Today's focus</h2>
-                <p className="text-[12px] mb-4" style={{ color: VS.text2 }}>You're working on {focusSelected.length} task{focusSelected.length > 1 ? 's' : ''} today</p>
-                <div className="space-y-2 mb-5">
-                  {focusSelected.map((title, i) => (
-                    <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-lg text-[13px]" style={{ backgroundColor: `${VS.accent}15`, border: `1px solid ${VS.accent}40`, color: VS.text0 }}>
-                      <span style={{ color: VS.accent }}>✓</span> {title}
-                    </div>
-                  ))}
-                </div>
-                <button
-                  onClick={() => setShowFocusPopup(false)}
-                  className="w-full px-4 py-2 rounded-lg text-[13px] font-medium"
-                  style={{ backgroundColor: VS.accent, color: '#fff' }}
-                >
-                  Start working
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* ── Page header ── */}
       <div className="flex flex-wrap items-start justify-between gap-3">
