@@ -110,6 +110,11 @@ export function Dashboard() {
   const [tasks, setTasks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // ── Daily task focus popup ─────────────────────────────────────────────────
+  const [showFocusPopup, setShowFocusPopup] = useState(false);
+  const [focusTask, setFocusTask] = useState('');
+  const [focusSearch, setFocusSearch] = useState('');
+
   // ── Attendance state ───────────────────────────────────────────────────────
   const [attendanceActive, setAttendanceActive] = useState<{ id: string; timeIn: string } | null>(null);
   const [attendanceElapsed, setAttendanceElapsed] = useState(0);
@@ -192,6 +197,15 @@ export function Dashboard() {
   }, [session?.user?.id, currentOrg?.id]);
 
   useEffect(() => { fetchDashboard(); }, [fetchDashboard]);
+
+  useEffect(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    const lastShown = localStorage.getItem('focus_popup_date');
+    if (lastShown !== today && !loading && tasks.length >= 0 && session?.user?.id) {
+      setShowFocusPopup(true);
+      localStorage.setItem('focus_popup_date', today);
+    }
+  }, [loading, session?.user?.id]);
 
   // ── Re-fetch attendance when cron auto-clocks out (SSE or window event) ───
   const fetchAttendance = useCallback(async () => {
@@ -377,8 +391,70 @@ export function Dashboard() {
     );
   }
 
+  const filteredFocusTasks = tasks.filter(t =>
+    t.status !== 'completed' && t.status !== 'cancelled' &&
+    (focusSearch === '' || t.title?.toLowerCase().includes(focusSearch.toLowerCase()))
+  ).slice(0, 8);
+
   return (
     <div className="space-y-6">
+
+      {/* ── Daily focus popup ── */}
+      {showFocusPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}>
+          <div className="w-full max-w-md rounded-xl p-6 shadow-2xl" style={{ backgroundColor: VS.bg1, border: `1px solid ${VS.border}` }}>
+            <h2 className="text-lg font-semibold mb-1" style={{ color: VS.text0 }}>What are you working on today?</h2>
+            <p className="text-[12px] mb-4" style={{ color: VS.text2 }}>Pick a task or type what you're focusing on</p>
+
+            <input
+              type="text"
+              placeholder="Search or type your focus..."
+              value={focusSearch}
+              onChange={e => { setFocusSearch(e.target.value); setFocusTask(e.target.value); }}
+              className="w-full px-3 py-2 rounded-lg text-[13px] mb-3 outline-none"
+              style={{ backgroundColor: VS.bg2, border: `1px solid ${VS.border}`, color: VS.text0 }}
+              autoFocus
+            />
+
+            {filteredFocusTasks.length > 0 && (
+              <div className="space-y-1 mb-4 max-h-48 overflow-y-auto">
+                {filteredFocusTasks.map(t => (
+                  <button
+                    key={t.id}
+                    onClick={() => setFocusTask(t.title)}
+                    className="w-full text-left px-3 py-2 rounded-lg text-[13px] transition-colors"
+                    style={{
+                      backgroundColor: focusTask === t.title ? `${VS.accent}20` : VS.bg2,
+                      border: `1px solid ${focusTask === t.title ? VS.accent : VS.border}`,
+                      color: focusTask === t.title ? VS.accent : VS.text1,
+                    }}
+                  >
+                    {t.title}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="flex gap-2 mt-2">
+              <button
+                onClick={() => setShowFocusPopup(false)}
+                className="flex-1 px-4 py-2 rounded-lg text-[13px]"
+                style={{ backgroundColor: VS.bg2, color: VS.text2, border: `1px solid ${VS.border}` }}
+              >
+                Skip
+              </button>
+              <button
+                onClick={() => setShowFocusPopup(false)}
+                className="flex-1 px-4 py-2 rounded-lg text-[13px] font-medium"
+                style={{ backgroundColor: VS.accent, color: '#fff' }}
+                disabled={!focusTask}
+              >
+                Let's go!
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Page header ── */}
       <div className="flex flex-wrap items-start justify-between gap-3">
