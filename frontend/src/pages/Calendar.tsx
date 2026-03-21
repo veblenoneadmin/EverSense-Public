@@ -28,6 +28,7 @@ interface CalEventExtended {
   syncedToGoogle: boolean;
   googleEventId: string | null;
   attendees: OrgMember[];
+  source?: string;
 }
 
 interface EventFormData {
@@ -103,7 +104,7 @@ export function Calendar() {
   const fetchGoogleEvents = useCallback((info: EventSourceFuncArg, success: (events: EventInput[]) => void) => {
     if (!googleConnected) return success([]);
     api.fetch(`/api/calendar/google-events?start=${encodeURIComponent(info.startStr)}&end=${encodeURIComponent(info.endStr)}`)
-      .then((d: { events: { id: string; title: string; start: string; end: string; allDay: boolean; description: string | null; location: string | null; meetLink: string | null; source: string }[] }) =>
+      .then((d: { events: { id: string; googleEventId: string; title: string; start: string; end: string; allDay: boolean; description: string | null; location: string | null; meetLink: string | null; source: string }[] }) =>
         success(d.events.map(e => ({
           id: e.id,
           title: `📅 ${e.title}`,
