@@ -72,35 +72,18 @@ async function runDatabaseMigrations() {
     return;
   }
 
+  const { exec } = await import('child_process');
+  const { promisify } = await import('util');
+  const execAsync = promisify(exec);
+
   try {
-    console.log('🔄 Running database migrations...');
-    const { exec } = await import('child_process');
-    const { promisify } = await import('util');
-    const execAsync = promisify(exec);
-    
-    const { stdout, stderr } = await execAsync('npx prisma migrate deploy');
-    if (stdout) console.log('📋 Migration output:', stdout);
-    if (stderr && !stderr.includes('INFO')) console.warn('⚠️  Migration warnings:', stderr);
-    
-    console.log('✅ Database migrations completed successfully');
+    console.log('🔄 Pushing database schema...');
+    const { stdout, stderr } = await execAsync('npx prisma db push --accept-data-loss');
+    if (stdout) console.log('📋 Schema push output:', stdout);
+    if (stderr && !stderr.includes('INFO')) console.warn('⚠️  Schema push warnings:', stderr);
+    console.log('✅ Database schema ready');
   } catch (error) {
-    console.error('❌ Database migration failed:', error.message);
-    
-    // Check if it's a baseline issue (P3005)
-    if (error.message.includes('P3005') || error.message.includes('database schema is not empty')) {
-      console.log('🔄 Database schema exists, checking migration status...');
-      try {
-        // Try to push the current schema state to match Prisma expectations
-        await execAsync('npx prisma db push --accept-data-loss');
-        console.log('✅ Database schema synchronized successfully');
-      } catch (pushError) {
-        console.warn('⚠️  Could not sync schema:', pushError.message);
-        console.log('📋 Database schema exists and server will continue normally');
-        console.log('💡 Manual fix: Run "npx prisma migrate resolve --applied <migration_name>" in Railway console');
-      }
-    }
-    
-    // Don't exit - let the server start anyway, tables might already exist
+    console.error('❌ Database schema push failed:', error.message);
   }
 }
 
