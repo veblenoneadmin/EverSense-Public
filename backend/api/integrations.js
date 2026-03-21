@@ -147,10 +147,17 @@ router.get('/google/connect', requireAuth, withOrgScope, async (req, res) => {
   if (!clientId) return res.status(500).json({ error: 'Google OAuth not configured' });
 
   const state = randomBytes(16).toString('hex');
-  await saveOAuthState(state, req.user.id, req.orgId);
+  try {
+    await saveOAuthState(state, req.user.id, req.orgId);
+    console.log('[Google Connect] State saved for user:', req.user.id);
+  } catch (e) {
+    console.error('[Google Connect] Failed to save state:', e.message);
+    return res.status(500).json({ error: 'Failed to initiate Google OAuth: ' + e.message });
+  }
 
   const backendUrl = process.env.APP_URL || process.env.BETTER_AUTH_URL || 'http://localhost:3001';
   const redirectUri = `${backendUrl}/api/integrations/google/callback`;
+  console.log('[Google Connect] Redirect URI:', redirectUri);
 
   const params = new URLSearchParams({
     client_id: clientId,
@@ -173,11 +180,15 @@ router.get('/google/callback', async (req, res) => {
   const frontendUrl = process.env.VITE_APP_URL || process.env.APP_URL || 'http://localhost:5173';
   const { code, state, error } = req.query;
 
+  console.log('[Google Callback] Received state:', state, 'error:', error);
+
   if (error) {
+    console.log('[Google Callback] Google returned error:', error);
     return res.redirect(`${frontendUrl}/settings?tab=integrations&google=denied`);
   }
 
   const pending = await getOAuthState(state);
+  console.log('[Google Callback] Pending state found:', !!pending, pending);
   if (!pending) {
     return res.redirect(`${frontendUrl}/settings?tab=integrations&google=error`);
   }
@@ -204,6 +215,7 @@ router.get('/google/callback', async (req, res) => {
     });
 
     const tokens = await tokenRes.json();
+    console.log('[Google Callback] Token response:', JSON.stringify({ error: tokens.error, hasAccess: !!tokens.access_token }));
     if (tokens.error) throw new Error(tokens.error_description || tokens.error);
 
     const expiresAt = tokens.expires_in
