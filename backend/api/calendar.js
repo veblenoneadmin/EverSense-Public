@@ -118,7 +118,18 @@ function shapeEvent(row, attendeeUserMap) {
 router.get('/status', requireAuth, async (req, res) => {
   try {
     const googleConnected = await hasGoogleCalendarAccess(req.user.id);
-    res.json({ googleConnected });
+
+    // Debug: check raw token row
+    let tokenDebug = null;
+    try {
+      const rows = await prisma.$queryRawUnsafe(
+        'SELECT userId, expiresAt, scope FROM `user_google_tokens` WHERE userId = ? LIMIT 1',
+        req.user.id
+      );
+      tokenDebug = rows[0] || null;
+    } catch (_) {}
+
+    res.json({ googleConnected, tokenDebug });
   } catch {
     res.json({ googleConnected: false });
   }
@@ -247,6 +258,8 @@ router.post('/events', requireAuth, withOrgScope, async (req, res) => {
         googleCalendarId = googleResult.googleCalendarId;
         finalMeetLink    = googleResult.meetLink || finalMeetLink;
         syncedToGoogle   = 1;
+      } else {
+        console.error('[Calendar] Google sync failed:', googleResult.error);
       }
     }
 
