@@ -10,25 +10,57 @@ import { prisma } from './prisma.js';
  * Returns null if the user has no Google account or no valid tokens.
  */
 export async function getGoogleAuthClient(userId) {
-  const account = await prisma.account.findFirst({
-    where: { userId, providerId: 'google' },
-    select: {
-      id: true,
-      accessToken: true,
-      refreshToken: true,
-      accessTokenExpiresAt: true,
-    },
-  });
+  // First try user_google_tokens (connected via Settings → Integrations)
+  let rows = [];
+  try {
+    rows = await prisma.$queryRawUnsafe(
+      'SELECT accessToken, refreshToken, expiresAt FROM `user_google_tokens` WHERE userId = ? LIMIT 1',
+      userId
+    );
+  } catch (_) {}
 
-  if (!account || !account.accessToken) return null;
+  const callbackUrl = `${process.env.APP_URL || process.env.BETTER_AUTH_URL || 'http://localhost:3001'}/api/integrations/google/callback`;
 
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI || `${process.env.BETTER_AUTH_URL || 'http://localhost:3001'}/api/auth/callback/google`
+    callbackUrl
   );
 
-  // Check if access token is expired (5-minute buffer)
+  if (rows.length > 0 && rows[0].accessToken) {
+    const token = rows[0];
+    const now = Date.now();
+    const expiresAt = token.expiresAt ? new Date(token.expiresAt).getTime() : 0;
+    const isExpired = expiresAt - now < 5 * 60 * 1000;
+
+    if (isExpired && token.refreshToken) {
+      try {
+        oauth2Client.setCredentials({ refresh_token: token.refreshToken });
+        const { credentials } = await oauth2Client.refreshAccessToken();
+        const newExpiry = credentials.expiry_date ? new Date(credentials.expiry_date) : null;
+        await prisma.$executeRawUnsafe(
+          'UPDATE `user_google_tokens` SET accessToken=?, expiresAt=?, updatedAt=NOW(3) WHERE userId=?',
+          credentials.access_token, newExpiry, userId
+        );
+        oauth2Client.setCredentials(credentials);
+      } catch (err) {
+        console.error('[GoogleCal] Token refresh failed:', err.message);
+        return null;
+      }
+    } else {
+      oauth2Client.setCredentials({ access_token: token.accessToken });
+    }
+    return oauth2Client;
+  }
+
+  // Fallback: better-auth Google Sign-In account
+  const account = await prisma.account.findFirst({
+    where: { userId, providerId: 'google' },
+    select: { id: true, accessToken: true, refreshToken: true, accessTokenExpiresAt: true },
+  }).catch(() => null);
+
+  if (!account || !account.accessToken) return null;
+
   const now = Date.now();
   const expiresAt = account.accessTokenExpiresAt ? new Date(account.accessTokenExpiresAt).getTime() : 0;
   const isExpired = expiresAt - now < 5 * 60 * 1000;
@@ -37,7 +69,6 @@ export async function getGoogleAuthClient(userId) {
     try {
       oauth2Client.setCredentials({ refresh_token: account.refreshToken });
       const { credentials } = await oauth2Client.refreshAccessToken();
-
       await prisma.account.update({
         where: { id: account.id },
         data: {
@@ -45,14 +76,9 @@ export async function getGoogleAuthClient(userId) {
           accessTokenExpiresAt: credentials.expiry_date ? new Date(credentials.expiry_date) : null,
         },
       });
-
       oauth2Client.setCredentials(credentials);
     } catch (err) {
       console.error('[GoogleCal] Token refresh failed:', err.message);
-      await prisma.account.update({
-        where: { id: account.id },
-        data: { accessToken: null },
-      }).catch(() => {});
       return null;
     }
   } else {
