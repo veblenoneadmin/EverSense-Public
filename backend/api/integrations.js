@@ -35,19 +35,41 @@ async function ensureTables() {
       '  PRIMARY KEY (`userId`)' +
       ') DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
     );
+    await prisma.$executeRawUnsafe(
+      'CREATE TABLE IF NOT EXISTS `oauth_states` (' +
+      '  `state` VARCHAR(64) NOT NULL,' +
+      '  `userId` VARCHAR(36) NOT NULL,' +
+      '  `orgId` VARCHAR(191) NOT NULL,' +
+      '  `expiresAt` DATETIME(3) NOT NULL,' +
+      '  PRIMARY KEY (`state`)' +
+      ') DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
+    );
     tablesReady = true;
   } catch (_e) { /* tables likely exist */ }
 }
 
-// ── Pending OAuth state store (in-memory, 10min TTL) ─────────────────────────
-const pendingStates = new Map(); // state -> { userId, orgId, ts }
-
-function cleanOldStates() {
-  const cutoff = Date.now() - 10 * 60 * 1000;
-  for (const [k, v] of pendingStates) {
-    if (v.ts < cutoff) pendingStates.delete(k);
-  }
+// ── Pending OAuth state store (DB-backed, 10min TTL) ─────────────────────────
+async function saveOAuthState(state, userId, orgId) {
+  await ensureTables();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  await prisma.$executeRawUnsafe(
+    'INSERT INTO `oauth_states` (state, userId, orgId, expiresAt) VALUES (?, ?, ?, ?) ' +
+    'ON DUPLICATE KEY UPDATE userId=VALUES(userId), orgId=VALUES(orgId), expiresAt=VALUES(expiresAt)',
+    state, userId, orgId, expiresAt
+  );
 }
+
+async function getOAuthState(state) {
+  await ensureTables();
+  const rows = await prisma.$queryRawUnsafe(
+    'SELECT userId, orgId FROM `oauth_states` WHERE state = ? AND expiresAt > NOW() LIMIT 1',
+    state
+  );
+  await prisma.$executeRawUnsafe('DELETE FROM `oauth_states` WHERE state = ?', state);
+  return rows[0] || null;
+}
+
+function cleanOldStates() { /* no-op, DB handles expiry */ }
 
 // ── GET /api/integrations/status ─────────────────────────────────────────────
 router.get('/status', requireAuth, withOrgScope, async (req, res) => {
@@ -118,14 +140,14 @@ router.delete('/fireflies', requireAuth, withOrgScope, async (req, res) => {
 });
 
 // ── GET /api/integrations/google/connect ────────────────────────────────────
-router.get('/google/connect', requireAuth, withOrgScope, (req, res) => {
+router.get('/google/connect', requireAuth, withOrgScope, async (req, res) => {
   cleanOldStates();
 
   const clientId = process.env.GOOGLE_CLIENT_ID;
   if (!clientId) return res.status(500).json({ error: 'Google OAuth not configured' });
 
   const state = randomBytes(16).toString('hex');
-  pendingStates.set(state, { userId: req.user.id, orgId: req.orgId, ts: Date.now() });
+  await saveOAuthState(state, req.user.id, req.orgId);
 
   const backendUrl = process.env.APP_URL || process.env.BETTER_AUTH_URL || 'http://localhost:3001';
   const redirectUri = `${backendUrl}/api/integrations/google/callback`;
@@ -155,11 +177,10 @@ router.get('/google/callback', async (req, res) => {
     return res.redirect(`${frontendUrl}/settings?tab=integrations&google=denied`);
   }
 
-  const pending = pendingStates.get(state);
+  const pending = await getOAuthState(state);
   if (!pending) {
     return res.redirect(`${frontendUrl}/settings?tab=integrations&google=error`);
   }
-  pendingStates.delete(state);
 
   try {
     await ensureTables();
