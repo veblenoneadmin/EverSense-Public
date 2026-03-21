@@ -92,12 +92,42 @@ export function Calendar() {
     api.fetch('/api/calendar/status').then((d: { googleConnected: boolean }) => setGoogleConnected(d.googleConnected ?? false)).catch(() => {});
   }, [currentOrg]);
 
-  // FullCalendar event source function
+  // FullCalendar event source — EverSense events
   const fetchEvents = useCallback((info: EventSourceFuncArg, success: (events: EventInput[]) => void, failure: (err: Error) => void) => {
     api.fetch(`/api/calendar/events?start=${encodeURIComponent(info.startStr)}&end=${encodeURIComponent(info.endStr)}`)
       .then((d: { events: EventInput[] }) => success(d.events))
       .catch((e: Error) => failure(e));
   }, [currentOrg]);
+
+  // FullCalendar event source — Google Calendar events (read-only)
+  const fetchGoogleEvents = useCallback((info: EventSourceFuncArg, success: (events: EventInput[]) => void) => {
+    if (!googleConnected) return success([]);
+    api.fetch(`/api/calendar/google-events?start=${encodeURIComponent(info.startStr)}&end=${encodeURIComponent(info.endStr)}`)
+      .then((d: { events: { id: string; title: string; start: string; end: string; allDay: boolean; description: string | null; location: string | null; meetLink: string | null; source: string }[] }) =>
+        success(d.events.map(e => ({
+          id: e.id,
+          title: `📅 ${e.title}`,
+          start: e.start,
+          end: e.end,
+          allDay: e.allDay,
+          backgroundColor: '#444',
+          borderColor: '#666',
+          textColor: '#ccc',
+          editable: false,
+          extendedProps: {
+            description: e.description,
+            location: e.location,
+            meetLink: e.meetLink,
+            source: 'google',
+            createdById: '',
+            syncedToGoogle: false,
+            googleEventId: e.googleEventId,
+            attendees: [],
+          },
+        })))
+      )
+      .catch(() => success([]));
+  }, [currentOrg, googleConnected]);
 
   const openCreateModal = (startStr?: string, allDay?: boolean) => {
     const start = startStr ? new Date(startStr) : new Date();
@@ -119,6 +149,7 @@ export function Calendar() {
 
   const handleEventClick = (info: EventClickArg) => {
     const ext = info.event.extendedProps as CalEventExtended;
+    if (ext.source === 'google') return; // Google events are read-only
     setEditingEventId(info.event.id);
     setForm({
       title:        info.event.title,
@@ -248,7 +279,7 @@ export function Calendar() {
             center: 'title',
             right:  'dayGridMonth,timeGridWeek,timeGridDay,listWeek',
           }}
-          events={fetchEvents}
+          eventSources={[fetchEvents, fetchGoogleEvents]}
           editable={true}
           selectable={true}
           dateClick={handleDateClick}

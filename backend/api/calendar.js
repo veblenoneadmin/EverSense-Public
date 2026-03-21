@@ -9,6 +9,7 @@ import {
   createGoogleCalendarEvent,
   updateGoogleCalendarEvent,
   deleteGoogleCalendarEvent,
+  listGoogleCalendarEvents,
 } from '../lib/google-calendar.js';
 
 const router = express.Router();
@@ -132,6 +133,19 @@ router.get('/status', requireAuth, async (req, res) => {
     res.json({ googleConnected, tokenDebug });
   } catch {
     res.json({ googleConnected: false });
+  }
+});
+
+// ── GET /api/calendar/google-events ──────────────────────────────────────────
+router.get('/google-events', requireAuth, async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    if (!start || !end) return res.status(400).json({ error: 'start and end are required' });
+    const events = await listGoogleCalendarEvents(req.user.id, start, end);
+    res.json({ events });
+  } catch (e) {
+    console.error('[Calendar] google-events error:', e.message);
+    res.json({ events: [] });
   }
 });
 

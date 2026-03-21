@@ -207,6 +207,44 @@ export async function deleteGoogleCalendarEvent(userId, googleEventId, googleCal
   }
 }
 
+/**
+ * Fetch events from the user's primary Google Calendar for a given date range.
+ * Returns an array of simplified event objects.
+ */
+export async function listGoogleCalendarEvents(userId, start, end) {
+  const auth = await getGoogleAuthClient(userId);
+  if (!auth) return [];
+
+  const calendar = google.calendar({ version: 'v3', auth });
+
+  try {
+    const response = await calendar.events.list({
+      calendarId: 'primary',
+      timeMin: new Date(start).toISOString(),
+      timeMax: new Date(end).toISOString(),
+      singleEvents: true,
+      orderBy: 'startTime',
+      maxResults: 250,
+    });
+
+    return (response.data.items || []).map(evt => ({
+      id: `google_${evt.id}`,
+      googleEventId: evt.id,
+      title: evt.summary || '(No title)',
+      start: evt.start?.dateTime || evt.start?.date,
+      end: evt.end?.dateTime || evt.end?.date,
+      allDay: !evt.start?.dateTime,
+      description: evt.description || null,
+      location: evt.location || null,
+      meetLink: evt.conferenceData?.entryPoints?.find(e => e.entryPointType === 'video')?.uri || null,
+      source: 'google',
+    }));
+  } catch (err) {
+    console.error('[GoogleCal] list error:', err.message);
+    return [];
+  }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function toDateString(d) {
