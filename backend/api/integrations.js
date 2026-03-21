@@ -201,6 +201,8 @@ router.get('/google/callback', async (req, res) => {
     const backendUrl = process.env.APP_URL || process.env.BETTER_AUTH_URL || 'http://localhost:3001';
     const redirectUri = `${backendUrl}/api/integrations/google/callback`;
 
+    console.log('[Google Callback] Exchanging code, redirectUri:', redirectUri, 'hasCode:', !!code, 'hasClientId:', !!clientId, 'hasClientSecret:', !!clientSecret);
+
     // Exchange code for tokens
     const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
