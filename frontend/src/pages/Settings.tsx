@@ -89,6 +89,9 @@ export function Settings() {
   const [attPolicy, setAttPolicy] = useState({ breakLimitH: 0, breakLimitM: 30, breakCountPerDay: 1 });
   const [attSaving, setAttSaving] = useState(false);
   const [attMsg, setAttMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [autoClockoutMinutes, setAutoClockoutMinutes] = useState(90);
+  const [clockoutSaving, setClockoutSaving] = useState(false);
+  const [clockoutMsg, setClockoutMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Sync avatar from session
   useEffect(() => {
@@ -135,6 +138,12 @@ export function Settings() {
         });
       })
       .catch(() => {});
+
+    if (isPrivileged && currentOrg?.id) {
+      apiClient.fetch(`/api/attendance/settings?orgId=${currentOrg.id}`)
+        .then((d: { autoClockoutMinutes: number }) => setAutoClockoutMinutes(d.autoClockoutMinutes ?? 90))
+        .catch(() => {});
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentOrg?.id, isPrivileged]);
 
@@ -924,6 +933,56 @@ export function Settings() {
                   <Save size={14} /> {attSaving ? 'Saving…' : 'Save Policy'}
                 </button>
               </div>
+            </div>
+
+            {/* Auto Clock-Out */}
+            <div style={{ background: VS.bg2, border: `1px solid ${VS.border}`, borderRadius: 12, padding: 24, marginTop: 24 }}>
+              <h3 style={{ fontSize: 15, fontWeight: 600, color: VS.text0, margin: '0 0 4px' }}>Auto Clock-Out</h3>
+              <p style={{ fontSize: 12, color: VS.text2, marginBottom: 20 }}>
+                Automatically clock out staff who forget to clock out after the set duration.
+              </p>
+
+              {clockoutMsg && (
+                <p style={{ fontSize: 13, color: clockoutMsg.type === 'success' ? VS.teal : VS.red, marginBottom: 12 }}>{clockoutMsg.text}</p>
+              )}
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+                <label style={{ fontSize: 13, color: VS.text1, whiteSpace: 'nowrap' }}>Clock out after</label>
+                <div style={{ position: 'relative', width: 100 }}>
+                  <input
+                    type="number" min={15} max={1440}
+                    value={autoClockoutMinutes}
+                    onChange={e => setAutoClockoutMinutes(Math.max(15, Math.min(1440, parseInt(e.target.value) || 90)))}
+                    style={{ width: '100%', background: VS.bg3, border: `1px solid ${VS.border2}`, borderRadius: 8, padding: '8px 36px 8px 12px', fontSize: 13, color: VS.text0, outline: 'none', boxSizing: 'border-box' }}
+                  />
+                  <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 11, color: VS.text2, pointerEvents: 'none' }}>min</span>
+                </div>
+                <span style={{ fontSize: 12, color: VS.text2 }}>
+                  ({Math.floor(autoClockoutMinutes / 60)}h {autoClockoutMinutes % 60}m)
+                </span>
+              </div>
+
+              <button
+                onClick={async () => {
+                  if (!currentOrg?.id) return;
+                  setClockoutSaving(true); setClockoutMsg(null);
+                  try {
+                    await apiClient.fetch(`/api/attendance/settings?orgId=${currentOrg.id}`, {
+                      method: 'PUT',
+                      body: JSON.stringify({ autoClockoutMinutes }),
+                    });
+                    setClockoutMsg({ type: 'success', text: 'Auto clock-out duration saved.' });
+                  } catch (e: any) {
+                    setClockoutMsg({ type: 'error', text: e.message || 'Failed to save.' });
+                  } finally {
+                    setClockoutSaving(false);
+                  }
+                }}
+                disabled={clockoutSaving}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '9px 20px', background: VS.accent, border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, color: '#fff', cursor: clockoutSaving ? 'not-allowed' : 'pointer', opacity: clockoutSaving ? 0.7 : 1 }}
+              >
+                <Save size={14} /> {clockoutSaving ? 'Saving…' : 'Save'}
+              </button>
             </div>
           </div>
         );

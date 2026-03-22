@@ -6,8 +6,21 @@ import { prisma } from './prisma.js';
 import { createNotification } from '../api/notifications.js';
 import { broadcast } from './sse.js';
 
-const AUTO_CLOCKOUT_SECONDS = 1.5 * 3600; // TEST: 1h 30m
-const INTERVAL_MS = 60 * 1000;             // every 1 minute
+const DEFAULT_CLOCKOUT_MINUTES = 90;
+const INTERVAL_MS = 60 * 1000; // every 1 minute
+
+async function getClockoutSeconds(orgId) {
+  try {
+    const rows = await prisma.$queryRawUnsafe(
+      'SELECT `value` FROM `org_integrations` WHERE orgId = ? AND `key` = ? LIMIT 1',
+      orgId, 'auto_clockout_minutes'
+    );
+    const minutes = rows[0]?.value ? parseInt(rows[0].value) : DEFAULT_CLOCKOUT_MINUTES;
+    return minutes * 60;
+  } catch {
+    return DEFAULT_CLOCKOUT_MINUTES * 60;
+  }
+}
 
 function fmtDuration(seconds) {
   const h = Math.floor(seconds / 3600);
@@ -20,11 +33,12 @@ async function runAutoClockout() {
   try {
     // Find all open attendance logs older than AUTO_CLOCKOUT_SECONDS
     // Use date arithmetic instead of TIMESTAMPDIFF+parameter to avoid Prisma BigInt binding issues
+    // Use the maximum possible limit to get all open sessions, filter per-org below
     const overdueRows = await prisma.$queryRawUnsafe(
       `SELECT id, userId, orgId, timeIn
        FROM attendance_logs
        WHERE timeOut IS NULL
-         AND timeIn <= DATE_SUB(NOW(), INTERVAL ${AUTO_CLOCKOUT_SECONDS} SECOND)`
+         AND timeIn <= DATE_SUB(NOW(), INTERVAL 15 MINUTE)`
     );
 
     if (!overdueRows.length) return;
@@ -35,6 +49,9 @@ async function runAutoClockout() {
       try {
         const now = new Date();
         const timeIn = new Date(row.timeIn);
+        const limitSeconds = await getClockoutSeconds(row.orgId);
+        const elapsedSeconds = Math.floor((now.getTime() - timeIn.getTime()) / 1000);
+        if (elapsedSeconds < limitSeconds) continue; // not overdue for this org
         const grossSeconds = Math.floor((now.getTime() - timeIn.getTime()) / 1000);
 
         // Clock out

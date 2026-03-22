@@ -518,4 +518,35 @@ router.put('/policy', requireAuth, withOrgScope, async (req, res) => {
   }
 });
 
+// ── GET /api/attendance/settings ─────────────────────────────────────────────
+router.get('/settings', requireAuth, withOrgScope, async (req, res) => {
+  try {
+    const rows = await prisma.$queryRawUnsafe(
+      'SELECT `value` FROM `org_integrations` WHERE orgId = ? AND `key` = ? LIMIT 1',
+      req.orgId, 'auto_clockout_minutes'
+    );
+    const minutes = rows[0]?.value ? parseInt(rows[0].value) : 90;
+    res.json({ autoClockoutMinutes: minutes });
+  } catch (e) {
+    res.json({ autoClockoutMinutes: 90 });
+  }
+});
+
+// ── PUT /api/attendance/settings ─────────────────────────────────────────────
+router.put('/settings', requireAuth, withOrgScope, async (req, res) => {
+  try {
+    const { autoClockoutMinutes } = req.body;
+    const minutes = Math.max(15, Math.min(1440, parseInt(autoClockoutMinutes) || 90));
+    const id = randomUUID();
+    await prisma.$executeRawUnsafe(
+      'INSERT INTO `org_integrations` (id, orgId, `key`, `value`) VALUES (?, ?, ?, ?) ' +
+      'ON DUPLICATE KEY UPDATE `value` = VALUES(`value`), `updatedAt` = NOW(3)',
+      id, req.orgId, 'auto_clockout_minutes', String(minutes)
+    );
+    res.json({ autoClockoutMinutes: minutes });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;
