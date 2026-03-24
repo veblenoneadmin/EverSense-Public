@@ -3163,8 +3163,18 @@ async function ensureRoleEnumSchema() {
 // Ensure admin@eversense.ai has a valid scrypt credential account
 async function ensureAdminCredentialAccount() {
   try {
-    const user = await prisma.user.findUnique({ where: { email: 'admin@eversense.ai' }, select: { id: true } });
-    if (!user) { console.log('  ⚠️  admin@eversense.ai user not found in DB'); return; }
+    let user = await prisma.user.findUnique({ where: { email: 'admin@eversense.ai' }, select: { id: true } });
+    if (!user) {
+      console.log('  ℹ️  admin@eversense.ai not found — creating user...');
+      const { randomUUID: uuid } = await import('crypto');
+      const newId = uuid();
+      await prisma.$executeRawUnsafe(
+        'INSERT INTO `User` (id, email, emailVerified, name, createdAt, updatedAt) VALUES (?, ?, 1, ?, NOW(), NOW())',
+        newId, 'admin@eversense.ai', 'EverSense Admin'
+      );
+      user = { id: newId };
+      console.log('  ✅ admin@eversense.ai user created');
+    }
 
     const { hashPassword } = await import('better-auth/crypto');
     const { randomUUID } = await import('crypto');
