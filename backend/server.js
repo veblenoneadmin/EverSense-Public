@@ -3242,14 +3242,14 @@ async function ensureAdminCredentialAccount() {
       });
       if (!existingMembership) {
         await prisma.membership.create({
-          data: { id: randomUUID(), userId: user.id, orgId: org.id, role: 'OWNER', createdAt: new Date(), updatedAt: new Date() },
+          data: { id: randomUUID(), userId: user.id, orgId: org.id, role: 'ADMIN', createdAt: new Date(), updatedAt: new Date() },
         });
-        console.log('  ✅ admin@eversense.ai OWNER membership created');
-      } else if (existingMembership.role !== 'OWNER') {
-        await prisma.membership.update({ where: { id: existingMembership.id }, data: { role: 'OWNER' } });
-        console.log('  ✅ admin@eversense.ai role updated to OWNER');
+        console.log('  ✅ admin@eversense.ai ADMIN membership created');
+      } else if (!['ADMIN', 'OWNER'].includes(existingMembership.role)) {
+        await prisma.membership.update({ where: { id: existingMembership.id }, data: { role: 'ADMIN' } });
+        console.log('  ✅ admin@eversense.ai role updated to ADMIN');
       } else {
-        console.log('  ✅ admin@eversense.ai already has OWNER membership');
+        console.log('  ✅ admin@eversense.ai already has ADMIN/OWNER membership');
       }
     } catch (orgErr) {
       console.warn('  ⚠️  org/membership setup error:', orgErr.message);
