@@ -3218,6 +3218,42 @@ async function ensureAdminCredentialAccount() {
       });
       console.log('  ✅ admin@eversense.ai credential account created');
     }
+
+    // Ensure the Veblen organization exists and admin has OWNER membership
+    try {
+      const { INTERNAL_CONFIG } = await import('./config/internal.js');
+      let org = await prisma.organization.findUnique({ where: { slug: INTERNAL_CONFIG.ORGANIZATION.slug } });
+      if (!org) {
+        org = await prisma.organization.create({
+          data: {
+            id: `org_${Date.now()}`,
+            name: INTERNAL_CONFIG.ORGANIZATION.name,
+            slug: INTERNAL_CONFIG.ORGANIZATION.slug,
+            createdById: user.id,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        });
+        console.log(`  ✅ Organization '${org.name}' created`);
+      }
+
+      const existingMembership = await prisma.membership.findFirst({
+        where: { userId: user.id, orgId: org.id },
+      });
+      if (!existingMembership) {
+        await prisma.membership.create({
+          data: { id: randomUUID(), userId: user.id, orgId: org.id, role: 'OWNER', createdAt: new Date(), updatedAt: new Date() },
+        });
+        console.log('  ✅ admin@eversense.ai OWNER membership created');
+      } else if (existingMembership.role !== 'OWNER') {
+        await prisma.membership.update({ where: { id: existingMembership.id }, data: { role: 'OWNER' } });
+        console.log('  ✅ admin@eversense.ai role updated to OWNER');
+      } else {
+        console.log('  ✅ admin@eversense.ai already has OWNER membership');
+      }
+    } catch (orgErr) {
+      console.warn('  ⚠️  org/membership setup error:', orgErr.message);
+    }
   } catch (e) {
     console.warn('  ⚠️  ensureAdminCredentialAccount error:', e.message);
   }
