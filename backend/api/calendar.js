@@ -9,7 +9,6 @@ import {
   createGoogleCalendarEvent,
   updateGoogleCalendarEvent,
   deleteGoogleCalendarEvent,
-  listGoogleCalendarEvents,
 } from '../lib/google-calendar.js';
 
 const router = express.Router();
@@ -119,33 +118,9 @@ function shapeEvent(row, attendeeUserMap) {
 router.get('/status', requireAuth, async (req, res) => {
   try {
     const googleConnected = await hasGoogleCalendarAccess(req.user.id);
-
-    // Debug: check raw token row
-    let tokenDebug = null;
-    try {
-      const rows = await prisma.$queryRawUnsafe(
-        'SELECT userId, expiresAt, scope FROM `user_google_tokens` WHERE userId = ? LIMIT 1',
-        req.user.id
-      );
-      tokenDebug = rows[0] || null;
-    } catch (_) {}
-
-    res.json({ googleConnected, tokenDebug });
+    res.json({ googleConnected });
   } catch {
     res.json({ googleConnected: false });
-  }
-});
-
-// ── GET /api/calendar/google-events ──────────────────────────────────────────
-router.get('/google-events', requireAuth, async (req, res) => {
-  try {
-    const { start, end } = req.query;
-    if (!start || !end) return res.status(400).json({ error: 'start and end are required' });
-    const events = await listGoogleCalendarEvents(req.user.id, start, end);
-    res.json({ events });
-  } catch (e) {
-    console.error('[Calendar] google-events error:', e.message);
-    res.json({ events: [] });
   }
 });
 
@@ -272,8 +247,6 @@ router.post('/events', requireAuth, withOrgScope, async (req, res) => {
         googleCalendarId = googleResult.googleCalendarId;
         finalMeetLink    = googleResult.meetLink || finalMeetLink;
         syncedToGoogle   = 1;
-      } else {
-        console.error('[Calendar] Google sync failed:', googleResult.error);
       }
     }
 

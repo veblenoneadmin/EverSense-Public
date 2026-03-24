@@ -72,18 +72,35 @@ async function runDatabaseMigrations() {
     return;
   }
 
-  const { exec } = await import('child_process');
-  const { promisify } = await import('util');
-  const execAsync = promisify(exec);
-
   try {
-    console.log('🔄 Pushing database schema...');
-    const { stdout, stderr } = await execAsync('npx prisma db push --accept-data-loss');
-    if (stdout) console.log('📋 Schema push output:', stdout);
-    if (stderr && !stderr.includes('INFO')) console.warn('⚠️  Schema push warnings:', stderr);
-    console.log('✅ Database schema ready');
+    console.log('🔄 Running database migrations...');
+    const { exec } = await import('child_process');
+    const { promisify } = await import('util');
+    const execAsync = promisify(exec);
+    
+    const { stdout, stderr } = await execAsync('npx prisma migrate deploy');
+    if (stdout) console.log('📋 Migration output:', stdout);
+    if (stderr && !stderr.includes('INFO')) console.warn('⚠️  Migration warnings:', stderr);
+    
+    console.log('✅ Database migrations completed successfully');
   } catch (error) {
-    console.error('❌ Database schema push failed:', error.message);
+    console.error('❌ Database migration failed:', error.message);
+    
+    // Check if it's a baseline issue (P3005)
+    if (error.message.includes('P3005') || error.message.includes('database schema is not empty')) {
+      console.log('🔄 Database schema exists, checking migration status...');
+      try {
+        // Try to push the current schema state to match Prisma expectations
+        await execAsync('npx prisma db push --accept-data-loss');
+        console.log('✅ Database schema synchronized successfully');
+      } catch (pushError) {
+        console.warn('⚠️  Could not sync schema:', pushError.message);
+        console.log('📋 Database schema exists and server will continue normally');
+        console.log('💡 Manual fix: Run "npx prisma migrate resolve --applied <migration_name>" in Railway console');
+      }
+    }
+    
+    // Don't exit - let the server start anyway, tables might already exist
   }
 }
 
@@ -3163,18 +3180,8 @@ async function ensureRoleEnumSchema() {
 // Ensure admin@eversense.ai has a valid scrypt credential account
 async function ensureAdminCredentialAccount() {
   try {
-    let user = await prisma.user.findUnique({ where: { email: 'admin@eversense.ai' }, select: { id: true } });
-    if (!user) {
-      console.log('  ℹ️  admin@eversense.ai not found — creating user...');
-      const { randomUUID: uuid } = await import('crypto');
-      const newId = uuid();
-      await prisma.$executeRawUnsafe(
-        'INSERT INTO `User` (id, email, emailVerified, name, createdAt, updatedAt) VALUES (?, ?, 1, ?, NOW(), NOW())',
-        newId, 'admin@eversense.ai', 'EverSense Admin'
-      );
-      user = { id: newId };
-      console.log('  ✅ admin@eversense.ai user created');
-    }
+    const user = await prisma.user.findUnique({ where: { email: 'admin@eversense.ai' }, select: { id: true } });
+    if (!user) { console.log('  ⚠️  admin@eversense.ai user not found in DB'); return; }
 
     const { hashPassword } = await import('better-auth/crypto');
     const { randomUUID } = await import('crypto');
@@ -3202,30 +3209,8 @@ async function ensureAdminCredentialAccount() {
 }
 
 // Run migrations and start server
-async function ensureUserColumns() {
-  const cols = [
-    { name: 'emailVerified', ddl: 'ALTER TABLE `User` ADD COLUMN `emailVerified` TINYINT(1) NULL DEFAULT 0' },
-    { name: 'completedWizards', ddl: 'ALTER TABLE `User` ADD COLUMN `completedWizards` TEXT NULL' },
-  ];
-  for (const col of cols) {
-    try {
-      const exists = await prisma.$queryRawUnsafe(
-        `SELECT COUNT(*) as cnt FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'User' AND column_name = ?`,
-        col.name
-      );
-      if (Number(exists[0]?.cnt ?? 0) === 0) {
-        await prisma.$executeRawUnsafe(col.ddl);
-        console.log(`✅ Added missing column User.${col.name}`);
-      }
-    } catch (e) {
-      console.warn(`⚠️  Could not add User.${col.name}:`, e.message);
-    }
-  }
-}
-
 async function startServer() {
   await runDatabaseMigrations();
-  await ensureUserColumns();
   await ensureRoleEnumSchema();
   await ensureTaskTablesSchema();
   await ensureTaskAssigneesSchema();

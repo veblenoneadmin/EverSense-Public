@@ -35,41 +35,19 @@ async function ensureTables() {
       '  PRIMARY KEY (`userId`)' +
       ') DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
     );
-    await prisma.$executeRawUnsafe(
-      'CREATE TABLE IF NOT EXISTS `oauth_states` (' +
-      '  `state` VARCHAR(64) NOT NULL,' +
-      '  `userId` VARCHAR(36) NOT NULL,' +
-      '  `orgId` VARCHAR(191) NOT NULL,' +
-      '  `expiresAt` DATETIME(3) NOT NULL,' +
-      '  PRIMARY KEY (`state`)' +
-      ') DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
-    );
     tablesReady = true;
   } catch (_e) { /* tables likely exist */ }
 }
 
-// ── Pending OAuth state store (DB-backed, 10min TTL) ─────────────────────────
-async function saveOAuthState(state, userId, orgId) {
-  await ensureTables();
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-  await prisma.$executeRawUnsafe(
-    'INSERT INTO `oauth_states` (state, userId, orgId, expiresAt) VALUES (?, ?, ?, ?) ' +
-    'ON DUPLICATE KEY UPDATE userId=VALUES(userId), orgId=VALUES(orgId), expiresAt=VALUES(expiresAt)',
-    state, userId, orgId, expiresAt
-  );
-}
+// ── Pending OAuth state store (in-memory, 10min TTL) ─────────────────────────
+const pendingStates = new Map(); // state -> { userId, orgId, ts }
 
-async function getOAuthState(state) {
-  await ensureTables();
-  const rows = await prisma.$queryRawUnsafe(
-    'SELECT userId, orgId FROM `oauth_states` WHERE state = ? AND expiresAt > NOW() LIMIT 1',
-    state
-  );
-  await prisma.$executeRawUnsafe('DELETE FROM `oauth_states` WHERE state = ?', state);
-  return rows[0] || null;
+function cleanOldStates() {
+  const cutoff = Date.now() - 10 * 60 * 1000;
+  for (const [k, v] of pendingStates) {
+    if (v.ts < cutoff) pendingStates.delete(k);
+  }
 }
-
-function cleanOldStates() { /* no-op, DB handles expiry */ }
 
 // ── GET /api/integrations/status ─────────────────────────────────────────────
 router.get('/status', requireAuth, withOrgScope, async (req, res) => {
@@ -140,24 +118,17 @@ router.delete('/fireflies', requireAuth, withOrgScope, async (req, res) => {
 });
 
 // ── GET /api/integrations/google/connect ────────────────────────────────────
-router.get('/google/connect', requireAuth, withOrgScope, async (req, res) => {
+router.get('/google/connect', requireAuth, withOrgScope, (req, res) => {
   cleanOldStates();
 
   const clientId = process.env.GOOGLE_CLIENT_ID;
   if (!clientId) return res.status(500).json({ error: 'Google OAuth not configured' });
 
   const state = randomBytes(16).toString('hex');
-  try {
-    await saveOAuthState(state, req.user.id, req.orgId);
-    console.log('[Google Connect] State saved for user:', req.user.id);
-  } catch (e) {
-    console.error('[Google Connect] Failed to save state:', e.message);
-    return res.status(500).json({ error: 'Failed to initiate Google OAuth: ' + e.message });
-  }
+  pendingStates.set(state, { userId: req.user.id, orgId: req.orgId, ts: Date.now() });
 
   const backendUrl = process.env.APP_URL || process.env.BETTER_AUTH_URL || 'http://localhost:3001';
   const redirectUri = `${backendUrl}/api/integrations/google/callback`;
-  console.log('[Google Connect] Redirect URI:', redirectUri);
 
   const params = new URLSearchParams({
     client_id: clientId,
@@ -180,18 +151,15 @@ router.get('/google/callback', async (req, res) => {
   const frontendUrl = process.env.VITE_APP_URL || process.env.APP_URL || 'http://localhost:5173';
   const { code, state, error } = req.query;
 
-  console.log('[Google Callback] Received state:', state, 'error:', error);
-
   if (error) {
-    console.log('[Google Callback] Google returned error:', error);
     return res.redirect(`${frontendUrl}/settings?tab=integrations&google=denied`);
   }
 
-  const pending = await getOAuthState(state);
-  console.log('[Google Callback] Pending state found:', !!pending, pending);
+  const pending = pendingStates.get(state);
   if (!pending) {
     return res.redirect(`${frontendUrl}/settings?tab=integrations&google=error`);
   }
+  pendingStates.delete(state);
 
   try {
     await ensureTables();
@@ -200,8 +168,6 @@ router.get('/google/callback', async (req, res) => {
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
     const backendUrl = process.env.APP_URL || process.env.BETTER_AUTH_URL || 'http://localhost:3001';
     const redirectUri = `${backendUrl}/api/integrations/google/callback`;
-
-    console.log('[Google Callback] Exchanging code, redirectUri:', redirectUri, 'hasCode:', !!code, 'hasClientId:', !!clientId, 'hasClientSecret:', !!clientSecret);
 
     // Exchange code for tokens
     const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
@@ -217,7 +183,6 @@ router.get('/google/callback', async (req, res) => {
     });
 
     const tokens = await tokenRes.json();
-    console.log('[Google Callback] Token response:', JSON.stringify({ error: tokens.error, hasAccess: !!tokens.access_token }));
     if (tokens.error) throw new Error(tokens.error_description || tokens.error);
 
     const expiresAt = tokens.expires_in

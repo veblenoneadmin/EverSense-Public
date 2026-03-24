@@ -10,57 +10,25 @@ import { prisma } from './prisma.js';
  * Returns null if the user has no Google account or no valid tokens.
  */
 export async function getGoogleAuthClient(userId) {
-  // First try user_google_tokens (connected via Settings → Integrations)
-  let rows = [];
-  try {
-    rows = await prisma.$queryRawUnsafe(
-      'SELECT accessToken, refreshToken, expiresAt FROM `user_google_tokens` WHERE userId = ? LIMIT 1',
-      userId
-    );
-  } catch (_) {}
+  const account = await prisma.account.findFirst({
+    where: { userId, providerId: 'google' },
+    select: {
+      id: true,
+      accessToken: true,
+      refreshToken: true,
+      accessTokenExpiresAt: true,
+    },
+  });
 
-  const callbackUrl = `${process.env.APP_URL || process.env.BETTER_AUTH_URL || 'http://localhost:3001'}/api/integrations/google/callback`;
+  if (!account || !account.accessToken) return null;
 
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
-    callbackUrl
+    process.env.GOOGLE_REDIRECT_URI || `${process.env.BETTER_AUTH_URL || 'http://localhost:3001'}/api/auth/callback/google`
   );
 
-  if (rows.length > 0 && rows[0].accessToken) {
-    const token = rows[0];
-    const now = Date.now();
-    const expiresAt = token.expiresAt ? new Date(token.expiresAt).getTime() : 0;
-    const isExpired = expiresAt - now < 5 * 60 * 1000;
-
-    if (isExpired && token.refreshToken) {
-      try {
-        oauth2Client.setCredentials({ refresh_token: token.refreshToken });
-        const { credentials } = await oauth2Client.refreshAccessToken();
-        const newExpiry = credentials.expiry_date ? new Date(credentials.expiry_date) : null;
-        await prisma.$executeRawUnsafe(
-          'UPDATE `user_google_tokens` SET accessToken=?, expiresAt=?, updatedAt=NOW(3) WHERE userId=?',
-          credentials.access_token, newExpiry, userId
-        );
-        oauth2Client.setCredentials(credentials);
-      } catch (err) {
-        console.error('[GoogleCal] Token refresh failed:', err.message);
-        return null;
-      }
-    } else {
-      oauth2Client.setCredentials({ access_token: token.accessToken });
-    }
-    return oauth2Client;
-  }
-
-  // Fallback: better-auth Google Sign-In account
-  const account = await prisma.account.findFirst({
-    where: { userId, providerId: 'google' },
-    select: { id: true, accessToken: true, refreshToken: true, accessTokenExpiresAt: true },
-  }).catch(() => null);
-
-  if (!account || !account.accessToken) return null;
-
+  // Check if access token is expired (5-minute buffer)
   const now = Date.now();
   const expiresAt = account.accessTokenExpiresAt ? new Date(account.accessTokenExpiresAt).getTime() : 0;
   const isExpired = expiresAt - now < 5 * 60 * 1000;
@@ -69,6 +37,7 @@ export async function getGoogleAuthClient(userId) {
     try {
       oauth2Client.setCredentials({ refresh_token: account.refreshToken });
       const { credentials } = await oauth2Client.refreshAccessToken();
+
       await prisma.account.update({
         where: { id: account.id },
         data: {
@@ -76,9 +45,14 @@ export async function getGoogleAuthClient(userId) {
           accessTokenExpiresAt: credentials.expiry_date ? new Date(credentials.expiry_date) : null,
         },
       });
+
       oauth2Client.setCredentials(credentials);
     } catch (err) {
       console.error('[GoogleCal] Token refresh failed:', err.message);
+      await prisma.account.update({
+        where: { id: account.id },
+        data: { accessToken: null },
+      }).catch(() => {});
       return null;
     }
   } else {
@@ -204,44 +178,6 @@ export async function deleteGoogleCalendarEvent(userId, googleEventId, googleCal
     if (err?.code === 410 || err?.status === 410) return { success: true }; // already gone
     console.error('[GoogleCal] delete error:', err.message);
     return { error: err.message };
-  }
-}
-
-/**
- * Fetch events from the user's primary Google Calendar for a given date range.
- * Returns an array of simplified event objects.
- */
-export async function listGoogleCalendarEvents(userId, start, end) {
-  const auth = await getGoogleAuthClient(userId);
-  if (!auth) return [];
-
-  const calendar = google.calendar({ version: 'v3', auth });
-
-  try {
-    const response = await calendar.events.list({
-      calendarId: 'primary',
-      timeMin: new Date(start).toISOString(),
-      timeMax: new Date(end).toISOString(),
-      singleEvents: true,
-      orderBy: 'startTime',
-      maxResults: 250,
-    });
-
-    return (response.data.items || []).map(evt => ({
-      id: `google_${evt.id}`,
-      googleEventId: evt.id,
-      title: evt.summary || '(No title)',
-      start: evt.start?.dateTime || evt.start?.date,
-      end: evt.end?.dateTime || evt.end?.date,
-      allDay: !evt.start?.dateTime,
-      description: evt.description || null,
-      location: evt.location || null,
-      meetLink: evt.conferenceData?.entryPoints?.find(e => e.entryPointType === 'video')?.uri || null,
-      source: 'google',
-    }));
-  } catch (err) {
-    console.error('[GoogleCal] list error:', err.message);
-    return [];
   }
 }
 
