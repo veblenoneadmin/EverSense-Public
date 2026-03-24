@@ -3192,8 +3192,30 @@ async function ensureAdminCredentialAccount() {
 }
 
 // Run migrations and start server
+async function ensureUserColumns() {
+  const cols = [
+    { name: 'emailVerified', ddl: 'ALTER TABLE `User` ADD COLUMN `emailVerified` TINYINT(1) NULL DEFAULT 0' },
+    { name: 'completedWizards', ddl: 'ALTER TABLE `User` ADD COLUMN `completedWizards` TEXT NULL' },
+  ];
+  for (const col of cols) {
+    try {
+      const exists = await prisma.$queryRawUnsafe(
+        `SELECT COUNT(*) as cnt FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'User' AND column_name = ?`,
+        col.name
+      );
+      if (Number(exists[0]?.cnt ?? 0) === 0) {
+        await prisma.$executeRawUnsafe(col.ddl);
+        console.log(`✅ Added missing column User.${col.name}`);
+      }
+    } catch (e) {
+      console.warn(`⚠️  Could not add User.${col.name}:`, e.message);
+    }
+  }
+}
+
 async function startServer() {
   await runDatabaseMigrations();
+  await ensureUserColumns();
   await ensureRoleEnumSchema();
   await ensureTaskTablesSchema();
   await ensureTaskAssigneesSchema();
