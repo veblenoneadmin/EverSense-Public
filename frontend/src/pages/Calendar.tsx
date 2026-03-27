@@ -27,6 +27,7 @@ interface CalEventExtended {
   syncedToGoogle: boolean;
   googleEventId: string | null;
   attendees: OrgMember[];
+  isGoogleEvent?: boolean;
 }
 
 interface EventFormData {
@@ -80,6 +81,7 @@ export function Calendar() {
   const [googleConnected, setGoogleConnected] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [isGoogleOnlyEvent, setIsGoogleOnlyEvent] = useState(false);
   const [form, setForm] = useState<EventFormData>(defaultForm());
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -119,6 +121,7 @@ export function Calendar() {
   const handleEventClick = (info: EventClickArg) => {
     const ext = info.event.extendedProps as CalEventExtended;
     setEditingEventId(info.event.id);
+    setIsGoogleOnlyEvent(!!ext.isGoogleEvent);
     setForm({
       title:        info.event.title,
       description:  ext.description || '',
@@ -268,13 +271,14 @@ export function Calendar() {
           setForm={setForm}
           members={members}
           isEdit={!!editingEventId}
+          isGoogleOnly={isGoogleOnlyEvent}
           googleConnected={googleConnected}
           saving={saving}
           deleting={deleting}
           error={error}
           onSave={handleSave}
           onDelete={handleDelete}
-          onClose={() => setShowModal(false)}
+          onClose={() => { setShowModal(false); setIsGoogleOnlyEvent(false); }}
         />
       )}
     </div>
@@ -287,6 +291,7 @@ interface EventModalProps {
   setForm: React.Dispatch<React.SetStateAction<EventFormData>>;
   members: OrgMember[];
   isEdit: boolean;
+  isGoogleOnly: boolean;
   googleConnected: boolean;
   saving: boolean;
   deleting: boolean;
@@ -297,7 +302,7 @@ interface EventModalProps {
 }
 
 function EventModal({
-  form, setForm, members, isEdit, googleConnected,
+  form, setForm, members, isEdit, isGoogleOnly, googleConnected,
   saving, deleting, error, onSave, onDelete, onClose,
 }: EventModalProps) {
   const [memberSearch, setMemberSearch] = useState('');
@@ -338,7 +343,7 @@ function EventModal({
           padding: '16px 20px', borderBottom: `1px solid ${VS.border}`,
         }}>
           <h2 style={{ color: VS.text0, fontSize: 15, fontWeight: 600, margin: 0 }}>
-            {isEdit ? 'Edit Event' : 'New Event'}
+            {isGoogleOnly ? 'Google Calendar Event' : isEdit ? 'Edit Event' : 'New Event'}
           </h2>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: VS.text2, padding: 4 }}>
             <X size={16} />
@@ -655,20 +660,22 @@ function EventModal({
                 borderRadius: 6, padding: '7px 14px', fontSize: 13, cursor: 'pointer',
               }}
             >
-              Cancel
+              {isGoogleOnly ? 'Close' : 'Cancel'}
             </button>
-            <button
-              onClick={onSave}
-              disabled={saving}
-              style={{
-                background: VS.accent, color: '#fff', border: 'none',
-                borderRadius: 6, padding: '7px 16px', fontSize: 13,
-                fontWeight: 500, cursor: saving ? 'not-allowed' : 'pointer',
-                opacity: saving ? 0.7 : 1,
-              }}
-            >
-              {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create event'}
-            </button>
+            {!isGoogleOnly && (
+              <button
+                onClick={onSave}
+                disabled={saving}
+                style={{
+                  background: VS.accent, color: '#fff', border: 'none',
+                  borderRadius: 6, padding: '7px 16px', fontSize: 13,
+                  fontWeight: 500, cursor: saving ? 'not-allowed' : 'pointer',
+                  opacity: saving ? 0.7 : 1,
+                }}
+              >
+                {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create event'}
+              </button>
+            )}
           </div>
         </div>
       </div>

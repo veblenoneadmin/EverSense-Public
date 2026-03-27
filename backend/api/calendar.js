@@ -395,6 +395,14 @@ router.delete('/events/:id', requireAuth, withOrgScope, async (req, res) => {
     await ensureTables();
     const { id } = req.params;
 
+    // Handle Google-only events (not stored locally, prefixed with gcal_)
+    if (id.startsWith('gcal_')) {
+      const googleEventId = id.slice(5);
+      const result = await deleteGoogleCalendarEvent(req.user.id, googleEventId, 'primary');
+      if (result.error) return res.status(400).json({ error: result.error });
+      return res.json({ message: 'Event deleted' });
+    }
+
     const rows = await prisma.$queryRawUnsafe(
       'SELECT * FROM calendar_events WHERE id = ? AND orgId = ?', id, req.orgId
     );
