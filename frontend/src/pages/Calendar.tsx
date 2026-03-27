@@ -8,7 +8,6 @@ import type { EventInput, EventClickArg, EventChangeArg, EventSourceFuncArg } fr
 import type { DateClickArg } from '@fullcalendar/interaction';
 import { useApiClient } from '../lib/api-client';
 import { useOrganization } from '../contexts/OrganizationContext';
-import { signIn } from '../lib/auth-client';
 import {
   Plus, X, Video, Users, Calendar as CalendarIcon,
   Check, ExternalLink, Search, ChevronDown, MapPin,
@@ -208,7 +207,7 @@ export function Calendar() {
             </div>
           ) : (
             <button
-              onClick={() => signIn.social({ provider: 'google', callbackURL: '/calendar' })}
+              onClick={() => { window.location.href = '/api/integrations/google/connect'; }}
               style={{
                 display: 'flex', alignItems: 'center', gap: 6,
                 padding: '5px 12px', borderRadius: 20, fontSize: 12, fontWeight: 500,
