@@ -155,6 +155,59 @@ export async function updateGoogleCalendarEvent(userId, googleEventId, googleCal
 }
 
 /**
+ * Fetch events from the user's primary Google Calendar within a date range.
+ * Returns an array of shaped events compatible with FullCalendar, or [] on failure.
+ */
+export async function listGoogleCalendarEvents(userId, startIso, endIso) {
+  const auth = await getGoogleAuthClient(userId);
+  if (!auth) return [];
+
+  const calendar = google.calendar({ version: 'v3', auth });
+
+  try {
+    const response = await calendar.events.list({
+      calendarId: 'primary',
+      timeMin: startIso,
+      timeMax: endIso,
+      singleEvents: true,
+      orderBy: 'startTime',
+      maxResults: 250,
+    });
+
+    return (response.data.items || []).map(evt => {
+      const isAllDay = !!evt.start?.date;
+      const start = isAllDay ? evt.start.date : evt.start?.dateTime;
+      const end   = isAllDay ? evt.end?.date  : evt.end?.dateTime;
+      const meetLink =
+        evt.conferenceData?.entryPoints?.find(e => e.entryPointType === 'video')?.uri || null;
+
+      return {
+        id: `gcal_${evt.id}`,
+        title: evt.summary || '(No title)',
+        start,
+        end,
+        allDay: isAllDay,
+        color: '#4285F4', // Google blue to distinguish external events
+        extendedProps: {
+          description:      evt.description || null,
+          location:         evt.location || null,
+          meetLink,
+          createdById:      null,
+          syncedToGoogle:   true,
+          googleEventId:    evt.id,
+          googleCalendarId: 'primary',
+          attendees:        [],
+          isGoogleEvent:    true,
+        },
+      };
+    });
+  } catch (err) {
+    console.error('[GoogleCal] list error:', err.message);
+    return [];
+  }
+}
+
+/**
  * Delete a Google Calendar event. Handles 410 (already deleted) gracefully.
  */
 export async function deleteGoogleCalendarEvent(userId, googleEventId, googleCalendarId) {

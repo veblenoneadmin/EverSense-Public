@@ -9,6 +9,7 @@ import {
   createGoogleCalendarEvent,
   updateGoogleCalendarEvent,
   deleteGoogleCalendarEvent,
+  listGoogleCalendarEvents,
 } from '../lib/google-calendar.js';
 
 const router = express.Router();
@@ -164,7 +165,14 @@ router.get('/events', requireAuth, withOrgScope, async (req, res) => {
       ...params
     );
 
-    if (events.length === 0) return res.json({ events: [] });
+    if (events.length === 0) {
+      const googleEvents = await listGoogleCalendarEvents(
+        req.user.id,
+        start ? new Date(start).toISOString() : new Date().toISOString(),
+        end   ? new Date(end).toISOString()   : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+      );
+      return res.json({ events: googleEvents });
+    }
 
     // Fetch attendees for all events in one query
     const eventIds = events.map(e => e.id);
@@ -192,7 +200,19 @@ router.get('/events', requireAuth, withOrgScope, async (req, res) => {
     }
 
     const shaped = events.map(e => shapeEvent(e, attendeesByEvent[e.id] || []));
-    res.json({ events: shaped });
+
+    // Merge Google Calendar events (read-only, shown in Google blue)
+    const googleEvents = await listGoogleCalendarEvents(
+      req.user.id,
+      start ? new Date(start).toISOString() : new Date().toISOString(),
+      end   ? new Date(end).toISOString()   : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+    );
+
+    // Exclude Google events that are already synced locally (avoid duplicates)
+    const localGoogleIds = new Set(events.filter(e => e.googleEventId).map(e => e.googleEventId));
+    const externalGoogle = googleEvents.filter(e => !localGoogleIds.has(e.extendedProps.googleEventId));
+
+    res.json({ events: [...shaped, ...externalGoogle] });
   } catch (err) {
     console.error('[Calendar] list error:', err);
     res.status(500).json({ error: 'Failed to fetch events' });
