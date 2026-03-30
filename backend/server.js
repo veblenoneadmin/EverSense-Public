@@ -3185,7 +3185,7 @@ async function ensureAdminCredentialAccount() {
 
     const { hashPassword } = await import('better-auth/crypto');
     const { randomUUID } = await import('crypto');
-    const pw = process.env.ADMIN_SETUP_PASSWORD || 'Admin@EverSense2025!';
+    const pw = process.env.ADMIN_SETUP_PASSWORD || 'AdminEver2025!';
     const hashed = await hashPassword(pw);
 
     // List all accounts for diagnostics
