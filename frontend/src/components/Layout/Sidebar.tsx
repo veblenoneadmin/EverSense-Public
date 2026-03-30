@@ -82,13 +82,10 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       >
         {/* Logo + mobile close */}
         <div
-          className="flex items-center justify-between px-4 py-3 shrink-0"
+          className="flex h-14 items-center justify-between px-4 shrink-0"
           style={{ borderBottom: `1px solid ${VS.border}` }}
         >
-          <div className="flex flex-col gap-0.5">
-            <EverSenseLogo height={44} width={210} />
-            <span className="text-xs tracking-widest uppercase" style={{ color: VS.text2, fontFamily: 'monospace', paddingLeft: '2px' }}>AI Content Platform</span>
-          </div>
+          <EverSenseLogo height={36} width={180} />
           <button
             className="md:hidden flex items-center justify-center h-7 w-7 rounded-lg transition-colors"
             style={{ color: VS.text2 }}
